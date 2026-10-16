@@ -176,6 +176,10 @@
 		6D4406116C74ABF197EA2480 /* SystemSurfaceStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F0307C2F462793909A9EC8E /* SystemSurfaceStatus.swift */; };
 		FA9BD55CAA4232A5C0312D11 /* SystemSurfaceFittedPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C1B422D40168D8CDB5A641 /* SystemSurfaceFittedPreview.swift */; };
 		C015A1000000000000000002 /* WorkBuddyQuotaTotal.swift in Sources */ = {isa = PBXBuildFile; fileRef = C015A1000000000000000001 /* WorkBuddyQuotaTotal.swift */; };
+		E71017000000000000000100 /* WidgetLimitHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71017000000000000000000 /* WidgetLimitHeader.swift */; };
+		E71017000000000000000200 /* WidgetLimitHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71017000000000000000000 /* WidgetLimitHeader.swift */; };
+		E71017000000000000000101 /* WidgetQuotaValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71017000000000000000001 /* WidgetQuotaValue.swift */; };
+		E71017000000000000000201 /* WidgetQuotaValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = E71017000000000000000001 /* WidgetQuotaValue.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -368,6 +372,8 @@
 		6F0307C2F462793909A9EC8E /* SystemSurfaceStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TokenMonitor/Features/Settings/SystemSurfaceStatus.swift"; sourceTree = SOURCE_ROOT; };
 		A6C1B422D40168D8CDB5A641 /* SystemSurfaceFittedPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TokenMonitor/Features/Settings/SystemSurfaceFittedPreview.swift"; sourceTree = SOURCE_ROOT; };
 		C015A1000000000000000001 /* WorkBuddyQuotaTotal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TokenMonitor/Core/Models/WorkBuddyQuotaTotal.swift"; sourceTree = SOURCE_ROOT; };
+		E71017000000000000000000 /* WidgetLimitHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetLimitHeader.swift"; sourceTree = "<group>"; };
+		E71017000000000000000001 /* WidgetQuotaValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WidgetQuotaValue.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -484,6 +490,8 @@
 				11000000000000000000001E /* TokenMonitorWidgets.entitlements */,
 				110000000000000000000011 /* WidgetContentOption.swift */,
 				B7E2000000000000000000F3 /* WidgetLimitLayouts.swift */,
+				E71017000000000000000001 /* WidgetQuotaValue.swift */,
+				E71017000000000000000000 /* WidgetLimitHeader.swift */,
 				110000000000000000000012 /* WidgetPeriodOption.swift */,
 				110000000000000000000016 /* WidgetPresentation.swift */,
 				110000000000000000000013 /* WidgetVisibilityOption.swift */,
@@ -865,6 +873,8 @@
 				B7E3000000000000000000B1 /* TokenMonitorWidgetEntry+Intent.swift in Sources */,
 				B7E3000000000000000000B3 /* WidgetUsageLayouts.swift in Sources */,
 				B7E3000000000000000000B5 /* WidgetLimitLayouts.swift in Sources */,
+				E71017000000000000000201 /* WidgetQuotaValue.swift in Sources */,
+				E71017000000000000000200 /* WidgetLimitHeader.swift in Sources */,
 				B7E3000000000000000000B7 /* WidgetActivityLayouts.swift in Sources */,
 				B7E3000000000000000000B9 /* WidgetAccessoryLayouts.swift in Sources */,
 				B7E3000000000000000000BB /* WidgetComponents.swift in Sources */,
@@ -988,6 +998,8 @@
 				702669D174DD36A2AD2741A5 /* UsageTrendChart.swift in Sources */,
 				B7E3000000000000000000B2 /* WidgetUsageLayouts.swift in Sources */,
 				B7E3000000000000000000B4 /* WidgetLimitLayouts.swift in Sources */,
+				E71017000000000000000101 /* WidgetQuotaValue.swift in Sources */,
+				E71017000000000000000100 /* WidgetLimitHeader.swift in Sources */,
 				B7E3000000000000000000B6 /* WidgetActivityLayouts.swift in Sources */,
 				B7E3000000000000000000B8 /* WidgetAccessoryLayouts.swift in Sources */,
 				B7E3000000000000000000BA /* WidgetComponents.swift in Sources */,

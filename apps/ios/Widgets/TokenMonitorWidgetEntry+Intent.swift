@@ -20,7 +20,7 @@ extension TokenMonitorWidgetEntry {
             period: configuration.period == .appDefault
                 ? preferences.widgetPeriod
                 : configuration.period.rawValue,
-            providerID: selectedProvider.flatMap { $0.isEmpty ? nil : $0 },
+            providerID: selectedProvider.flatMap { $0.isEmpty || $0 == "all" ? nil : $0 },
             showsCost: configuration.costVisibility.resolve(preferences.widgetShowsCost),
             showsUpdateTime: configuration.updateTimeVisibility.resolve(preferences.widgetShowsUpdateTime),
             ink: configuration.textContrast == .appDefault

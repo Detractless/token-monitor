@@ -137,7 +137,15 @@ extension TokenMonitorSharedPayload.Snapshot {
                 updatedAt: Date.hubTimestamp(from: provider.updatedAt).flatMap { $0 <= now ? $0 : nil },
                 windows: windows,
                 sourceStale: provider.stale,
-                accountKey: provider.accountKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+                accountKey: provider.accountKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+                maskedAccountLabel: provider.accountEmail.flatMap { email in
+                    // Reject malformed email-like identity rather than leaking
+                    // an unmasked value from maskEmailAddress's fallback.
+                    let value = email.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard let at = value.lastIndex(of: "@"), at > value.startIndex,
+                          value.index(after: at) < value.endIndex else { return nil }
+                    return AccountIdentity.maskEmailAddress(value)
+                }
             )
         }
     }

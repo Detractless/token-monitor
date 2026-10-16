@@ -1,9 +1,8 @@
 import SwiftUI
 import WidgetKit
 
-/// AI limits across home families: one provider's quota windows in the
-/// desktop's fixed English vocabulary — `82% left`, `Reset 1h 52m` — with
-/// vendor colour only on the meters.
+/// Quota surfaces grow from a focused account to desktop-ordered providers
+/// and accounts. An explicit provider selection scopes every family.
 struct WidgetLimitsView: View {
     @Environment(\.widgetInk) private var ink
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -11,10 +10,9 @@ struct WidgetLimitsView: View {
     let family: WidgetFamily
 
     private var accessible: Bool { typeSize.isAccessibilitySize }
-    private var windows: [TokenMonitorSharedPayload.LimitWindow] {
-        entry.visibleLimitWindows
+    private var limits: [TokenMonitorSharedPayload.Limit] {
+        entry.orderedLimits.filter { !$0.windows.isEmpty }
     }
-    private var providerID: String? { entry.preferredLimit?.providerID }
 
     var body: some View {
         switch family {
@@ -24,242 +22,195 @@ struct WidgetLimitsView: View {
         }
     }
 
-    // MARK: Small — one dominant reading, one compact second window
+    // MARK: Small — focused account, tightly grouped reading
 
     private var small: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            WidgetHeader(entry: entry, isCompact: true)
-            Spacer(minLength: 0)
-            if let primary = windows.first {
-                let column = WidgetWindowColumn(
-                    window: primary, providerID: providerID,
-                    now: entry.date, locale: entry.locale,
-                    showsResetTime: entry.preferences.widgetShowsResetTime
-                )
-                VStack(alignment: .leading, spacing: 4) {
-                    valueRow(column, size: 30)
-                    Text(verbatim: labelWithReset(primary))
-                        .font(.caption)
-                        .foregroundStyle(ink.secondary)
-                        .lineLimit(1)
-                    meter(for: column, height: 6)
-                }
-            }
-            if !accessible, let secondary = windows.dropFirst().first {
-                let column = WidgetWindowColumn(
-                    window: secondary, providerID: providerID,
-                    now: entry.date, locale: entry.locale,
-                    showsResetTime: entry.preferences.widgetShowsResetTime
-                )
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(verbatim: secondary.label)
+        VStack(alignment: .leading, spacing: 8) {
+            if let limit = entry.preferredLimit {
+                WidgetLimitHeader(entry: entry, limit: limit)
+                if let primary = limit.windows.first {
+                    VStack(alignment: .leading, spacing: 4) {
+                        WidgetQuotaValue(column: column(primary, for: limit))
+                        Text(verbatim: labelWithReset(primary))
+                            .font(.caption2)
                             .foregroundStyle(ink.secondary)
-                        Spacer(minLength: 4)
-                        Text(verbatim: column.shortValueText)
-                            .monospacedDigit()
+                            .lineLimit(1)
+                        meter(primary, providerID: limit.providerID, height: 6)
                     }
-                    .font(.caption2)
-                    .lineLimit(1)
-                    meter(for: column, height: 4)
+                    .frame(maxHeight: .infinity, alignment: .center)
+                }
+                if !accessible, let secondary = limit.windows.dropFirst().first {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(verbatim: secondary.label)
+                                .foregroundStyle(ink.secondary)
+                            Spacer(minLength: 4)
+                            Text(verbatim: column(secondary, for: limit).shortValueText)
+                                .monospacedDigit()
+                        }
+                        .font(.caption2)
+                        .lineLimit(1)
+                        meter(secondary, providerID: limit.providerID, height: 4)
+                    }
                 }
             }
         }
     }
 
-    // MARK: Medium — up to two equal window columns
+    // MARK: Medium — two accounts, or a focused provider's windows
 
-    private var medium: some View {
-        let rows = entry.preferences.widgetLimitLayout == "rows"
-        return VStack(alignment: .leading, spacing: 12) {
-            WidgetHeader(entry: entry, planLabel: entry.preferredLimit?.planLabel)
-            Link(destination: Self.limitsURL) {
+    @ViewBuilder private var medium: some View {
+        if limits.count > 1, !accessible {
+            HStack(alignment: .top, spacing: 16) {
+                ForEach(limits.prefix(2)) { limit in
+                    VStack(alignment: .leading, spacing: 8) {
+                        WidgetLimitHeader(entry: entry, limit: limit, accountLabel: accountLabel(for: limit))
+                        ForEach(limit.windows.prefix(2)) { window in
+                            column(window, for: limit)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+            }
+        } else if let limit = limits.first {
+            VStack(alignment: .leading, spacing: 12) {
+                WidgetLimitHeader(entry: entry, limit: limit)
+                let rows = entry.preferences.widgetLimitLayout == "rows" && limit.windows.count > 1
                 (rows
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
                     : AnyLayout(HStackLayout(alignment: .top, spacing: 16))) {
-                    ForEach(windows.prefix(accessible ? 1 : 2)) { window in
-                        let column = WidgetWindowColumn(
-                            window: window, providerID: providerID,
-                            now: entry.date, locale: entry.locale,
-                            showsResetTime: entry.preferences.widgetShowsResetTime
-                        )
+                    ForEach(limit.windows.prefix(accessible ? 1 : 2)) { window in
                         if rows {
-                            column
+                            column(window, for: limit)
                         } else {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(verbatim: window.label)
-                                    .font(.caption)
-                                    .foregroundStyle(ink.secondary)
-                                    .lineLimit(1)
-                                valueRow(column, size: 28)
-                                meter(for: column, height: 6)
-                                if entry.preferences.widgetShowsResetTime {
-                                    Text(verbatim: column.resetText ?? " ")
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundStyle(ink.secondary)
-                                        .lineLimit(1)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityElement(children: .combine)
+                            expandedWindow(window, for: limit, size: 30)
                         }
                     }
                 }
             }
-            .buttonStyle(.plain)
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
     }
 
-    // MARK: Large — AI Limits header, provider blocks
+    // MARK: Large — as many complete accounts as the host can fit
 
-    private var large: some View {
-        let limits = Array(entry.orderedLimits.prefix(accessible ? 1 : 3))
-        let configured = entry.providerID != nil
-        return VStack(alignment: .leading, spacing: 12) {
-            WidgetHeader(
-                entry: entry,
-                title: "AI Limits",
-                systemImage: "gauge.with.dots.needle.50percent"
-            )
-            Link(destination: Self.limitsURL) {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(limits.enumerated()), id: \.offset) { index, limit in
-                        if index > 0 { Divider() }
-                        providerBlock(
-                            limit,
-                            windows: windowList(for: limit, cap: configured ? 4 : 2),
-                            grid: configured
-                        )
+    @ViewBuilder private var large: some View {
+        if limits.count == 1, let limit = limits.first {
+            VStack(alignment: .leading, spacing: 16) {
+                WidgetLimitHeader(entry: entry, limit: limit)
+                ForEach(limit.windows.prefix(accessible ? 1 : 4)) { window in
+                    expandedWindow(window, for: limit, size: 36)
+                        .frame(maxHeight: .infinity, alignment: .center)
+                }
+            }
+        } else {
+            ViewThatFits(in: .vertical) {
+                accountList(capacity: accessible ? 1 : 4)
+                accountList(capacity: accessible ? 1 : 3)
+                accountList(capacity: accessible ? 1 : 2)
+                accountList(capacity: 1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private func accountList(capacity: Int) -> some View {
+        let visible = Array(limits.prefix(capacity))
+        return VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, limit in
+                let sameProvider = index > 0 && visible[index - 1].providerID == limit.providerID
+                if index > 0 { Divider() }
+                VStack(alignment: .leading, spacing: 8) {
+                    WidgetLimitHeader(
+                        entry: entry, limit: limit,
+                        accountLabel: accountLabel(for: limit),
+                        showsProvider: !sameProvider
+                    )
+                    if accessible {
+                        if let window = limit.windows.first {
+                            column(window, for: limit)
+                        }
+                    } else {
+                        ForEach(Array(stride(from: 0, to: limit.windows.count, by: 2)), id: \.self) { offset in
+                            HStack(alignment: .top, spacing: 16) {
+                                column(limit.windows[offset], for: limit)
+                                if limit.windows.indices.contains(offset + 1) {
+                                    column(limit.windows[offset + 1], for: limit)
+                                }
+                            }
+                        }
                     }
                 }
             }
-            .buttonStyle(.plain)
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func windowList(
-        for limit: TokenMonitorSharedPayload.Limit,
-        cap: Int
-    ) -> [TokenMonitorSharedPayload.LimitWindow] {
-        Array(limit.windows.filter {
-            $0.remainingPercent?.isFinite == true || $0.amount?.isFinite == true
-        }.prefix(cap))
-    }
-
-    /// Mark + name (+ plan, + per-account stale badge), then its windows —
-    /// a 2×2 grid for a configured provider, two columns otherwise.
-    private func providerBlock(
-        _ limit: TokenMonitorSharedPayload.Limit,
-        windows: [TokenMonitorSharedPayload.LimitWindow],
-        grid: Bool
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 6) {
-                ActivityMark(providerID: limit.providerID, size: 15)
-                Text(verbatim: WidgetPresentation.displayName(for: limit.providerID))
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                if let plan = limit.planLabel, !plan.isEmpty {
-                    Text(verbatim: plan)
-                        .font(.caption)
-                        .foregroundStyle(ink.secondary)
-                        .lineLimit(1)
+            if limits.count > visible.count {
+                HStack(spacing: 4) {
+                    Text(verbatim: "+\(limits.count - visible.count)")
+                    Image(systemName: "chevron.right")
                 }
-                Spacer(minLength: 4)
-                if limit.sourceStale == true {
-                    Image(systemName: "clock.badge.exclamationmark")
-                        .font(.caption2)
-                        .foregroundStyle(ink.secondary)
-                        .accessibilityLabel("Data may be out of date")
-                }
-            }
-            if grid {
-                Grid(horizontalSpacing: 16, verticalSpacing: 10) {
-                    GridRow {
-                        columnCell(limit.providerID, windows, at: 0)
-                        columnCell(limit.providerID, windows, at: 1)
-                    }
-                    GridRow {
-                        columnCell(limit.providerID, windows, at: 2)
-                        columnCell(limit.providerID, windows, at: 3)
-                    }
-                }
-            } else {
-                HStack(alignment: .top, spacing: 16) {
-                    columnCell(limit.providerID, windows, at: 0)
-                    columnCell(limit.providerID, windows, at: 1)
-                }
-            }
-        }
-    }
-
-    private func columnCell(
-        _ providerID: String,
-        _ windows: [TokenMonitorSharedPayload.LimitWindow],
-        at index: Int
-    ) -> some View {
-        Group {
-            if windows.indices.contains(index) {
-                WidgetWindowColumn(
-                    window: windows[index],
-                    providerID: providerID,
-                    now: entry.date,
-                    locale: entry.locale,
-                    showsResetTime: entry.preferences.widgetShowsResetTime
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // MARK: Shared pieces
-
-    /// `82%` with a baseline-aligned `left` — or the credits amount alone.
-    private func valueRow(_ column: WidgetWindowColumn, size: CGFloat) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Text(verbatim: column.shortValueText)
-                .font(.system(size: size, weight: .semibold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-                .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(1)
-                .padding(.trailing, 2)
-                .widgetAccentable()
-            if column.isPercent {
-                Text(verbatim: "left")
-                    .font(.caption)
-                    .foregroundStyle(ink.secondary)
-                    .fixedSize()
+                .font(.caption2)
+                .foregroundStyle(ink.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityLabel(Text("Open Token Monitor"))
             }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func meter(for column: WidgetWindowColumn, height: CGFloat) -> some View {
+    private func accountLabel(for limit: TokenMonitorSharedPayload.Limit) -> String? {
+        let accounts = limits.filter { $0.providerID == limit.providerID }
+        guard accounts.count > 1 else { return nil }
+        return limit.maskedAccountLabel
+            ?? accounts.firstIndex(where: { $0.id == limit.id }).map { "#\($0 + 1)" }
+    }
+
+    private func column(
+        _ window: TokenMonitorSharedPayload.LimitWindow,
+        for limit: TokenMonitorSharedPayload.Limit
+    ) -> WidgetWindowColumn {
+        WidgetWindowColumn(
+            window: window, providerID: limit.providerID,
+            now: entry.date, locale: entry.locale,
+            showsResetTime: entry.preferences.widgetShowsResetTime
+        )
+    }
+
+    private func expandedWindow(
+        _ window: TokenMonitorSharedPayload.LimitWindow,
+        for limit: TokenMonitorSharedPayload.Limit,
+        size: CGFloat
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(verbatim: window.label)
+                .font(.caption)
+                .foregroundStyle(ink.secondary)
+                .lineLimit(1)
+            WidgetQuotaValue(column: column(window, for: limit), size: size)
+            meter(window, providerID: limit.providerID, height: 6)
+            if entry.preferences.widgetShowsResetTime, let reset = column(window, for: limit).resetText {
+                Text(verbatim: reset)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(ink.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func meter(_ window: TokenMonitorSharedPayload.LimitWindow, providerID: String, height: CGFloat) -> some View {
         Group {
-            if let fraction = column.fraction {
-                ActivityMeter(
-                    fraction: fraction,
-                    tint: ActivityPalette.quotaTint(providerID),
-                    height: height
-                )
+            if let fraction = WidgetPresentation.fraction(window.remainingPercent, total: 100) {
+                ActivityMeter(fraction: fraction, tint: ActivityPalette.quotaTint(providerID), height: height)
             } else {
-                Capsule()
-                    .fill(.clear)
-                    .frame(height: height)
+                Capsule().fill(.clear).frame(height: height)
             }
         }
         .accessibilityHidden(true)
     }
 
-    /// `Session · 1h 30m` — window label plus its reset countdown.
     private func labelWithReset(_ window: TokenMonitorSharedPayload.LimitWindow) -> String {
-        let label = window.label
-        guard entry.preferences.widgetShowsResetTime, let resetAt = window.resetAt else { return label }
-        return label + " · " + WidgetPresentation.resetCountdown(to: resetAt, now: entry.date)
+        guard entry.preferences.widgetShowsResetTime, let resetAt = window.resetAt else { return window.label }
+        return window.label + " · " + WidgetPresentation.resetCountdown(to: resetAt, now: entry.date)
     }
 
     static let limitsURL = URL(string: "tokenmonitor://limits")!

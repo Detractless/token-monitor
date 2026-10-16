@@ -15,7 +15,8 @@ struct WidgetLayoutRenderTests {
     private func entry(
         content: String = "overview",
         snapshot: Snapshot? = TokenMonitorWidgetEntry.placeholderSnapshot,
-        preferences: TokenMonitorSharedPayload.Preferences = .default
+        preferences: TokenMonitorSharedPayload.Preferences = .default,
+        providerID: String? = nil
     ) -> TokenMonitorWidgetEntry {
         TokenMonitorWidgetEntry(
             date: .now,
@@ -23,7 +24,7 @@ struct WidgetLayoutRenderTests {
             preferences: preferences,
             content: content,
             period: "today",
-            providerID: nil,
+            providerID: providerID,
             showsCost: true,
             showsUpdateTime: true,
             ink: .recommended
@@ -184,6 +185,51 @@ struct WidgetLayoutRenderTests {
         preferences.languageCode = "zh-TW"
         check(entry(content: "activity", preferences: preferences), content: "activity",
               name: "medium", family: .systemMedium, size: CGSize(width: 364, height: 170), state: "summary")
+    }
+
+    @Test func desktopAccountsAndSingleWindowFillEachFamily() {
+        let base = TokenMonitorWidgetEntry.placeholderSnapshot
+        let now = Date.now
+        typealias Limit = TokenMonitorSharedPayload.Limit
+        typealias Window = TokenMonitorSharedPayload.LimitWindow
+        func window(_ label: String, _ percent: Double, hours: Double) -> Window {
+            .init(id: label.lowercased(), label: label, remainingPercent: percent,
+                  amount: nil, currency: nil, resetAt: now.addingTimeInterval(hours * 3600))
+        }
+        let limits: [Limit] = [
+            .init(id: "claude-pro", providerID: "claude", planLabel: "Pro", status: "ok",
+                  updatedAt: now.addingTimeInterval(-180),
+                  windows: [window("Session", 0, hours: 0.4), window("Weekly", 93, hours: 159)]),
+            .init(id: "codex-pro", providerID: "codex", planLabel: "Pro", status: "ok",
+                  updatedAt: now.addingTimeInterval(-120), windows: [window("Weekly", 28, hours: 131)],
+                  maskedAccountLabel: "j***3@example.com"),
+            .init(id: "codex-free", providerID: "codex", planLabel: "Free", status: "ok",
+                  updatedAt: now.addingTimeInterval(-120), windows: [window("Monthly", 100, hours: 615)],
+                  maskedAccountLabel: "l***3@example.com"),
+            .init(id: "codex-plus", providerID: "codex", planLabel: "Plus", status: "ok",
+                  updatedAt: now.addingTimeInterval(-120),
+                  windows: [window("Session", 31, hours: 0.4), window("Weekly", 73, hours: 131)],
+                  maskedAccountLabel: "l***8@example.com")
+        ]
+        func snapshot(_ values: [Limit]) -> Snapshot {
+            .init(updatedAt: now, today: base.today, month: base.month, allTime: base.allTime,
+                  limits: values, activity: base.activity)
+        }
+        var preferences = TokenMonitorSharedPayload.Preferences.default
+        preferences.languageCode = "zh-TW"
+        for (name, family, size) in families.prefix(3) {
+            check(entry(content: "limits", snapshot: snapshot(limits), preferences: preferences),
+                  content: "limits", name: name, family: family, size: size, state: "desktop")
+            check(entry(content: "limits", snapshot: snapshot(limits), preferences: preferences, providerID: "codex"),
+                  content: "limits", name: name, family: family, size: size, state: "codex-accounts")
+            check(entry(content: "limits", snapshot: snapshot([limits[1]]), preferences: preferences),
+                  content: "limits", name: name, family: family, size: size, state: "single-window")
+        }
+        for width in [158.0, 164, 180] {
+            check(entry(content: "limits", snapshot: snapshot([limits[0]]), preferences: preferences),
+                  content: "limits", name: "small", family: .systemSmall,
+                  size: CGSize(width: width, height: width), state: "compact-\(Int(width))")
+        }
     }
 
 }

@@ -17,11 +17,17 @@ struct ProviderEntity: AppEntity {
 
 struct ProviderEntityQuery: EntityQuery {
     func entities(for identifiers: [String]) async throws -> [ProviderEntity] {
-        availableProviders().filter { identifiers.contains($0.id) }
+        ([allProviders] + availableProviders()).filter { identifiers.contains($0.id) }
     }
 
     func suggestedEntities() async throws -> [ProviderEntity] {
-        availableProviders()
+        [allProviders] + availableProviders()
+    }
+
+    /// An explicit automatic choice can override a named provider in the
+    /// app defaults; nil continues to mean "follow app" for existing widgets.
+    private var allProviders: ProviderEntity {
+        ProviderEntity(id: "all", name: String(localized: "All providers"))
     }
 
     private func availableProviders() -> [ProviderEntity] {

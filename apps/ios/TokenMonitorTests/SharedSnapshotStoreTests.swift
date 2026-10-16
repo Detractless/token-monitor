@@ -82,4 +82,21 @@ struct SharedSnapshotStoreTests {
         #expect(!json.contains("secret"))
         #expect(!json.contains("credential"))
     }
+    @Test func widgetAccountLabelsAreMaskedAndLegacySnapshotsDecode() throws {
+        let stats = try JSONDecoder().decode(HubStats.self, from: Data(#"{"limits":{"providers":[{"provider":"codex","accountEmail":"javis@example.com","windows":[{"kind":"weekly","remainingPercent":28}]}]}}"#.utf8))
+        let snapshot = TokenMonitorSharedPayload.Snapshot.make(stats: stats, history: .empty)
+        #expect(snapshot.limits.first?.maskedAccountLabel == "j***s@example.com")
+        let data = try JSONEncoder().encode(snapshot)
+        #expect(!String(decoding: data, as: UTF8.self).contains("javis@example.com"))
+        let decoded = try JSONDecoder().decode(TokenMonitorSharedPayload.Snapshot.self, from: data)
+        #expect(decoded.limits.first?.maskedAccountLabel == "j***s@example.com")
+        let legacy = try JSONDecoder().decode(TokenMonitorSharedPayload.Limit.self,
+            from: Data(#"{"id":"codex","providerID":"codex","windows":[]}"#.utf8))
+        #expect(legacy.maskedAccountLabel == nil)
+        let malformed = try JSONDecoder().decode(HubStats.self,
+            from: Data(#"{"limits":{"providers":[{"provider":"codex","accountEmail":"@private***"}]}}"#.utf8))
+        #expect(TokenMonitorSharedPayload.Snapshot.make(stats: malformed, history: .empty)
+            .limits.first?.maskedAccountLabel == nil)
+    }
+
 }

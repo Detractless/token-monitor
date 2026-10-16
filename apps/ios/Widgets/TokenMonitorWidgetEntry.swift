@@ -31,9 +31,9 @@ struct TokenMonitorWidgetEntry: TimelineEntry {
     var preferredLimit: TokenMonitorSharedPayload.Limit? {
         if let providerID {
             // A missing configured provider must not silently show another account.
-            return snapshot?.limits.first { $0.providerID == providerID }
+            return snapshot?.limits.first { $0.providerID == providerID && !$0.windows.isEmpty }
         }
-        return snapshot?.limits.min { lhs, rhs in
+        return snapshot?.limits.filter { !$0.windows.isEmpty }.min { lhs, rhs in
             let left = lhs.windows.compactMap(\.remainingPercent).min() ?? 101
             let right = rhs.windows.compactMap(\.remainingPercent).min() ?? 101
             return left < right
@@ -65,26 +65,21 @@ struct TokenMonitorWidgetEntry: TimelineEntry {
     }
 
     var visibleLimitWindows: [TokenMonitorSharedPayload.LimitWindow] {
-        preferredLimit?.windows.filter {
-            $0.remainingPercent?.isFinite == true || $0.amount?.isFinite == true
-        } ?? []
+        preferredLimit?.windows ?? []
     }
 
-    /// Automatic limits pick the most constrained account first, then keep the
-    /// Hub's remaining order — the user's own Limits order.
+    /// Provider selection scopes the list, never collapses its accounts.
+    /// Larger families keep the desktop order; only the small headline uses
+    /// the most constrained account when selection is automatic.
     var orderedLimits: [TokenMonitorSharedPayload.Limit] {
-        guard providerID == nil, let snapshot else {
-            return preferredLimit.map { [$0] } ?? []
-        }
-        let rest = snapshot.limits.filter { $0.id != preferredLimit?.id }
-        return (preferredLimit.map { [$0] } ?? []) + rest
+        (snapshot?.limits ?? []).filter { providerID == nil || $0.providerID == providerID }
     }
 
     var hasData: Bool {
         guard snapshot != nil else { return false }
         switch content {
         case "limits":
-            return !visibleLimitWindows.isEmpty
+            return orderedLimits.contains { !$0.windows.isEmpty }
         case "activity":
             return !days.isEmpty
         default:

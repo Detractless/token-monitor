@@ -81,6 +81,8 @@ nonisolated struct TokenMonitorSharedPayload: Codable, Equatable, Sendable {
         let windows: [LimitWindow]
         var sourceStale: Bool? = nil
         var accountKey: String? = nil
+        /// Pre-masked by the app; never a raw email or credential.
+        var maskedAccountLabel: String? = nil
     }
 
     struct LimitWindow: Codable, Equatable, Identifiable, Sendable {
