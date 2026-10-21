@@ -13,17 +13,17 @@ The Electron scripts use disposable user data and fixture APIs. They do not star
 
 ## Recorded local results
 
-On macOS before integration with current main:
+On macOS after integrating main at `c3b38e779`:
 
-- `npm run verify`: **7,687 passed, 8 skipped, 0 failed** (lint and Node tests).
+- `npm run verify`: **7,704 passed, 8 skipped, 0 failed** (lint and Node tests).
 - Settings Electron harness: **58/58**. Covers persistent tabs, focus/scroll and draft retention, source/preview routes, rapid version selection and exact install token, identity artwork/source labels, compact placements, shared menu surface/keyboard/positioning and host style-editor dimensions.
-- Motion Electron harness: **40/40** at the reviewed motion stage. Covers per-component `inherit` / `none`, Roll/Count and reduced-motion precedence. Later UI changes did not change the motion implementation.
+- Motion Electron harness: **40/40**, rerun after integrating main. Covers per-component `inherit` / `none`, Roll/Count and reduced-motion precedence.
 - Earlier Electron isolation harness: **50/50** at the reviewed runtime stage. Additional independent probes found and drove corrections for malformed messages, payload limits, storage/reload, stale host callbacks and view budgets. Passing an earlier harness alone is not proof of every sandbox boundary.
 - Independent reviews covered successive runtime, lifecycle/distribution, interactive-content, page/motion and settings changes. The final menu/style delta received bounded GO: **58** independently repeated Electron checks plus **8** supplementary checks, **216** focused Node tests and clean lint. Full verification was parent-run, not independently repeated.
 
 Actual isolated-app checks at 380 and 520 CSS px found no horizontal overflow in the four plugin settings tabs. Pointer and keyboard checks covered placement tooltip dismissal/navigation, action-menu Escape/focus restoration, Home/End, outside-click dismissal and style transfer. The menu shares existing App popup surface rules and positioning helpers; style colors use the existing 30×22 px inputs. Native-glass CSS parity was checked in Chromium fixtures, not accepted as physical macOS compositor proof.
 
-Settings/editor screenshots in this directory show only plugin UI from temporary local acceptance data; live usage totals and account details are excluded.
+[Installed plugins](screenshots/installed.png) and [personal style editor](screenshots/style.png) show the visible plugin UI from temporary local acceptance data. Live usage totals and account details are excluded. The editor is scrollable; its screenshot shows the visible portion.
 
 ## Boundaries that remain open
 
