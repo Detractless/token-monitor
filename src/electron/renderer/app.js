@@ -12712,6 +12712,7 @@ function renderNotchPageChoices() {
     settings: state.settings, catalog: state.pluginCatalog, t,
     save: async patch => { await saveSettings(patch); },
     place: async (ref, placed) => { await pluginApi.place(ref, 'notch', placed); },
+    pluginIcon: name => window.TokenMonitorPluginViews?.iconNode(document, name, null, 14),
     onError: error => setStatus(error.message, true)
   });
 }

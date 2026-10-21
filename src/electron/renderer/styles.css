@@ -3036,6 +3036,19 @@ button.settings-help-trigger:focus-visible { outline: 1px solid var(--accent); o
 .theme-preset-chip:hover { border-color: var(--line-strong); color: var(--text); }
 .theme-preset-chip.active { border-color: rgba(var(--accent-rgb), 0.58); color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
 .theme-preset-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25); }
+.notch-page-settings { display: grid; gap: 8px; min-width: 0; padding: 8px 0 4px; }
+.notch-page-settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; color: var(--text); font-size: 0.6875rem; }
+.notch-page-settings-heading > span:last-child { overflow: hidden; color: var(--muted); font-size: 0.5625rem; text-overflow: ellipsis; white-space: nowrap; }
+.notch-page-settings > .settings-note { margin: 0; }
+.notch-page-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.notch-page-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; max-width: 100%; padding: 0 10px 0 8px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font: inherit; font-size: 0.6875rem; cursor: pointer; transition: border-color 160ms ease, color 160ms ease, background 160ms ease; }
+.notch-page-chip > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notch-page-chip :is(.view-switcher-icon, .pv-icon) { width: 14px; height: 14px; flex: 0 0 auto; opacity: .55; }
+.notch-page-chip:hover:not(:disabled) { border-color: var(--line-strong); color: var(--text); }
+.notch-page-chip[aria-pressed="true"] { border-color: rgba(var(--accent-rgb), .58); background: rgba(var(--accent-rgb), .1); color: var(--text); }
+.notch-page-chip[aria-pressed="true"] :is(.view-switcher-icon, .pv-icon) { opacity: 1; color: var(--accent); }
+.notch-page-chip:disabled { opacity: .4; cursor: default; }
+.notch-page-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .theme-code-field { display: grid; gap: 6px; }
 .settings-panel input.theme-code-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;

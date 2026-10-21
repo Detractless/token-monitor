@@ -30,7 +30,7 @@ class Element {
     }
   }
   replaceChildren(...nodes) { this.children.forEach(node => { node.parent = null; }); this.children = []; this.append(...nodes); }
-  setAttribute(key, value) { this.attributes[key] = String(value); }
+  setAttribute(key, value) { this.attributes[key] = String(value); if (key === 'class') this.className = value; }
   removeAttribute(key) { delete this.attributes[key]; }
   addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); }
   fire(name, event = {}) { for (const fn of this.listeners[name] || []) fn(event); }
@@ -55,12 +55,14 @@ class Element {
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
 }
 
-function panelFixture(t, settings = {}, { viaRenderer = false } = {}) {
+function panelFixture(t, settings = {}, { viaRenderer = false, pluginHost = null, pluginViews = null } = {}) {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.parse('2026-10-18T10:00:00Z') });
   const savedRaf = global.requestAnimationFrame, savedCancel = global.cancelAnimationFrame;
   global.requestAnimationFrame = () => 1; global.cancelAnimationFrame = () => {};
   t.after(() => { global.requestAnimationFrame = savedRaf; global.cancelAnimationFrame = savedCancel; });
-  const document = { activeElement: null };
+  const document = { activeElement: null, listeners: {} };
+  document.addEventListener = (name, fn) => { (document.listeners[name] ||= []).push(fn); };
+  document.fire = (name, event = {}) => { for (const fn of document.listeners[name] || []) fn(event); };
   document.createElementNS = (_ns, tag) => new Element(tag, document);
   document.createElement = (tag) => new Element(tag, document);
   const el = (tag, className = '', value) => {
@@ -103,6 +105,7 @@ function panelFixture(t, settings = {}, { viaRenderer = false } = {}) {
       }
     }
   };
+  if (pluginViews) window.TokenMonitorPluginViews = pluginViews;
   const state = { locale: 'en', appearanceKey: 'initial' };
   const overflowText = {
     bound: [], stopped: [], preserved: [],
@@ -130,7 +133,7 @@ function panelFixture(t, settings = {}, { viaRenderer = false } = {}) {
       limitAccountPlan: (...args) => plans.limitAccountPlan(...args),
       limitDetailInfoNode: (...args) => plans.limitDetailInfoNode(...args)
     },
-    markNode: id => el('span', 'edge-dock-mark', id), hasMask: () => true,
+    markNode: id => el('span', 'edge-dock-mark', id), hasMask: () => true, pluginHost,
     providerLabel: id => id, limitProviderColor: () => '#888',
     limitAccountTitle: (_id, record, index, peers) => window.TokenMonitorAccountIdentity.accountTitleLabel(record, peers, { index, maskEmail: settings.maskLimitAccountEmails === true }),
     formatTokens: value => String(value), formatCardTokens: value => String(value), formatBreakdownTokens: value => String(value), formatCost: value => `$${value}`,

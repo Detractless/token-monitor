@@ -56,42 +56,128 @@
     const view = { page: 'home', limitPage: 0, breakdownPeriod: 'today', scrub: null };
     const node = el('div', 'notch-panel');
     const band = el('div', 'notch-band');
-    const tabs = el('div', 'notch-tabs');
-    tabs.setAttribute('role', 'tablist');
-    const tabPill = el('span', 'notch-tab-pill');
-    tabs.append(tabPill);
+    const leadTrack = el('div', 'notch-tabs');
+    leadTrack.setAttribute('role', 'tablist');
+    const leadPill = el('span', 'notch-tab-pill');
+    leadTrack.append(leadPill);
+    const leadRail = el('div', 'notch-tab-rail is-leading');
+    leadRail.append(leadTrack);
+    const trailTrack = el('div', 'notch-tabs');
+    const trailPill = el('span', 'notch-tab-pill');
+    trailTrack.append(trailPill);
+    const trailRail = el('div', 'notch-tab-rail is-trailing');
+    trailRail.append(trailTrack);
     const status = el('div', 'notch-status');
-    const tabRail = el('div', 'notch-tab-rail');
-    const tabViewport = el('div', 'notch-tab-viewport');
-    tabViewport.append(tabs);
-    const previousTabs = el('button', 'notch-tabs-previous');
-    const nextTabs = el('button', 'notch-tabs-next');
-    for (const button of [previousTabs, nextTabs]) {
+    const trailLane = el('div', 'notch-band-trailing');
+    trailLane.append(trailRail, status);
+    band.append(leadRail, el('div', 'notch-band-gap'), trailLane);
+    // Pages fill the left lane first and continue right of the camera; only
+    // when both sides are full does a track become a pager, stepped one slot
+    // per press. Steps never change the selection or take focus.
+    const stepBack = el('button', 'notch-tab-step is-back');
+    const stepForward = el('button', 'notch-tab-step is-forward');
+    for (const [button, path] of [[stepBack, 'M6.5 1.5 3 5l3.5 3.5'], [stepForward, 'M3.5 1.5 7 5 3.5 8.5']]) {
       button.type = 'button';
-      const arrow = el('span', 'cursor-disclosure-icon');
-      arrow.setAttribute('aria-hidden', 'true');
-      button.append(arrow);
+      button.tabIndex = -1;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 10 10');
+      svg.setAttribute('aria-hidden', 'true');
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      line.setAttribute('d', path);
+      line.setAttribute('fill', 'none');
+      line.setAttribute('stroke', 'currentColor');
+      line.setAttribute('stroke-width', '1.6');
+      line.setAttribute('stroke-linecap', 'round');
+      line.setAttribute('stroke-linejoin', 'round');
+      svg.append(line);
+      button.append(svg);
     }
-    previousTabs.addEventListener('click', () => stepTab(-1));
-    nextTabs.addEventListener('click', () => stepTab(1));
-    tabRail.append(previousTabs, tabViewport, nextTabs);
-    band.append(tabRail, el('div', 'notch-band-gap'), status);
-    function stepTab(delta) {
-      const page = pageOrder[pageOrder.indexOf(view.page) + delta];
-      if (page) { selectPage(page); tabButtons.get(page)?.focus({ preventScroll: true }); }
+    activateOnPress(stepBack, () => stepWindow(-1));
+    activateOnPress(stepForward, () => stepWindow(1));
+    // A slot is a 34px tab plus the 2px gap; the track adds 2px of padding on
+    // each side, so n slots occupy 36n + 2 and a pair of 16px step buttons
+    // costs exactly one slot.
+    const TAB_SLOT = 36;
+    const STEP_SLOT = 18;
+    // The pager window (start index into the segment) survives data pushes; it
+    // re-centres on the selected page only when the page or the segment moved.
+    let tabWindow = 0;
+    let lastFitPage;
+    let lastPagerKey = '';
+    function stepWindow(delta) {
+      tabWindow += delta;
+      fitTabs();
     }
     function fitTabs() {
-      const overflow = tabs.scrollWidth > tabRail.clientWidth + 1;
-      tabRail.classList.toggle('has-overflow', overflow);
-      tabRail.classList.toggle('is-tight', tabRail.clientWidth < 78);
-      previousTabs.hidden = nextTabs.hidden = !overflow;
-      previousTabs.disabled = pageOrder.indexOf(view.page) <= 0;
-      nextTabs.disabled = pageOrder.indexOf(view.page) >= pageOrder.length - 1;
+      // clientWidth is already in logical points: CSS zoom widens the layout
+      // viewport it reports, while the 36px slot is counted in the same unit.
+      const total = pageOrder.length;
+      const L = leadRail.clientWidth > 0 ? Math.max(0, Math.floor((leadRail.clientWidth - 2) / TAB_SLOT)) : total;
+      const T = trailRail.clientWidth > 0 ? Math.max(0, Math.floor((trailRail.clientWidth - 2) / TAB_SLOT)) : 0;
+      let leadPages = [], trailPages = [], segment = null, k = 0, segmentTrack = null;
+      if (total <= L) leadPages = [...pageOrder];
+      else if (total <= L + T) { leadPages = pageOrder.slice(0, L); trailPages = pageOrder.slice(L); }
+      else if (T >= 2) { leadPages = pageOrder.slice(0, L); segment = pageOrder.slice(L); k = T - 1; segmentTrack = trailTrack; }
+      else { segment = [...pageOrder]; k = L >= 2 ? L - 1 : Math.max(1, L); segmentTrack = leadTrack; }
+      // The step pair needs a whole slot of its own; a single-slot lead rail
+      // shows one whole tab instead, and keyboard selection still pages it.
+      const stepsShown = Boolean(segment) && (segmentTrack === trailTrack || L >= 2);
+      if (segment) {
+        const key = `${segmentTrack === trailTrack ? 'trail' : 'lead'}|${k}|${segment.join('|')}`;
+        if (key !== lastPagerKey || view.page !== lastFitPage) {
+          const index = Math.max(0, segment.indexOf(view.page));
+          tabWindow = index - Math.floor((k - 1) / 2);
+        }
+        tabWindow = Math.max(0, Math.min(tabWindow, Math.max(0, segment.length - k)));
+        lastPagerKey = key;
+        if (segmentTrack === trailTrack) trailPages = segment.slice(tabWindow, tabWindow + k);
+        else leadPages = segment.slice(tabWindow, tabWindow + k);
+      } else {
+        tabWindow = 0;
+        lastPagerKey = '';
+      }
+      lastFitPage = view.page;
+      const shown = new Set([...leadPages, ...trailPages]);
+      for (const [page, button] of tabButtons) button.hidden = !shown.has(page);
+      stepBack.hidden = stepForward.hidden = !stepsShown;
+      stepBack.disabled = !stepsShown || tabWindow <= 0;
+      stepForward.disabled = !stepsShown || tabWindow >= segment.length - k;
+      // Leave stable tracks in place on data pushes: reparenting a focused
+      // tab would blur it even when the resulting order is identical.
+      const focused = document.activeElement;
+      const leadChildren = [leadPill], trailChildren = [trailPill];
+      if (segmentTrack === leadTrack) leadChildren.push(stepBack);
+      leadChildren.push(...leadPages.map(page => tabButtons.get(page)));
+      if (segmentTrack === leadTrack) leadChildren.push(stepForward);
+      if (segmentTrack === trailTrack) trailChildren.push(stepBack);
+      trailChildren.push(...trailPages.map(page => tabButtons.get(page)));
+      if (segmentTrack === trailTrack) trailChildren.push(stepForward);
+      leadChildren.push(...[...tabButtons.values()].filter(button => button.hidden));
+      if (!segmentTrack) leadChildren.push(stepBack, stepForward);
+      for (const [track, children] of [[leadTrack, leadChildren], [trailTrack, trailChildren]]) {
+        const current = [...track.children];
+        if (current.length !== children.length || children.some((child, index) => current[index] !== child)) track.append(...children);
+      }
+      if (focused && tabButtons.get(focused.dataset?.page) === focused && !focused.hidden && document.activeElement !== focused) focused.focus({ preventScroll: true });
+      const owned = trailPages.map((page) => tabButtons.get(page).id).filter(Boolean).join(' ');
+      if (owned) leadTrack.setAttribute('aria-owns', owned); else leadTrack.removeAttribute('aria-owns');
+      stepBack.setAttribute('aria-label', t('settings.notch.previousPage'));
+      stepForward.setAttribute('aria-label', t('settings.notch.nextPage'));
+      syncPill(leadPill, leadPages.indexOf(view.page), segmentTrack === leadTrack && stepsShown ? STEP_SLOT : 0);
+      syncPill(trailPill, trailPages.indexOf(view.page), segmentTrack === trailTrack && stepsShown ? STEP_SLOT : 0);
       const selected = tabButtons.get(view.page);
-      if (!selected) return;
-      const left = selected.offsetLeft, right = left + selected.offsetWidth;
-      if (left < tabViewport.scrollLeft) tabViewport.scrollLeft = left;
-      else if (right > tabViewport.scrollLeft + tabViewport.clientWidth) tabViewport.scrollLeft = right - tabViewport.clientWidth;
+      const entry = selected && !selected.hidden ? selected : tabButtons.get(leadPages[0] || trailPages[0]);
+      for (const button of tabButtons.values()) button.tabIndex = button === entry ? 0 : -1;
+    }
+    // A pill switching on lands at its slot without the slide transition,
+    // while a pill moving inside its own track keeps the spring.
+    function syncPill(pill, index, offset) {
+      if (index < 0) { pill.classList.add('is-off'); return; }
+      const wasOff = pill.classList.contains('is-off');
+      if (wasOff) pill.style.transition = 'none';
+      pill.style.transform = `translateX(${index * TAB_SLOT + offset}px)`;
+      pill.classList.remove('is-off');
+      if (wasOff) { void pill.offsetWidth; pill.style.transition = ''; }
     }
     const pages = el('div', 'notch-pages');
     // The fixed pages first, then any plugin pages the user placed here.
@@ -102,6 +188,18 @@
       home: 'home', limits: 'limits', sessions: 'session', breakdown: 'model'
     };
     const domId = (page) => page.replace(/[^a-z0-9-]/g, '-');
+    function pluginPageState(page) {
+      return pluginHost?.state('notch', page.slice(PLUGIN_PAGE_PREFIX.length));
+    }
+    function pluginIconName(page) {
+      const ref = page.slice(PLUGIN_PAGE_PREFIX.length);
+      return pluginPageState(page)?.icon || payload?.panel?.pluginCatalog?.[ref]?.icon || 'dot';
+    }
+    function pageTitle(page) {
+      if (!page.startsWith(PLUGIN_PAGE_PREFIX)) return t(`notch.tab.${page}`);
+      const ref = page.slice(PLUGIN_PAGE_PREFIX.length);
+      return pluginPageState(page)?.title || payload?.panel?.pluginCatalog?.[ref]?.title || t('notch.tab.plugin');
+    }
     function addPage(page) {
       const isPlugin = page.startsWith(PLUGIN_PAGE_PREFIX);
       const pageNode = el('section', `notch-page notch-page-${isPlugin ? 'plugin' : page}`);
@@ -122,7 +220,7 @@
       button.append(icon, el('span', 'notch-tab-badge'));
       activateOnPress(button, () => selectPage(page));
       tabButtons.set(page, button);
-      tabs.append(button);
+      leadTrack.append(button);
     }
     for (const page of PAGES) addPage(page);
     node.append(band, pages);
@@ -144,13 +242,13 @@
       }
       for (const page of wanted) if (!pageNodes.has(page)) addPage(page);
       pageOrder = next;
-      for (const [page, button] of tabButtons) button.hidden = !next.includes(page);
-      for (const page of pageOrder) tabs.append(tabButtons.get(page));
+      fitTabs();
       if (!pageOrder.includes(view.page)) { releasePluginPage(view.page); view.page = pageOrder[0] || ''; }
     }
-    tabs.addEventListener('keydown', (event) => {
+    for (const track of [leadTrack, trailTrack]) track.addEventListener('keydown', (event) => {
       if (!pageOrder.length) return;
-      const current = pageOrder.indexOf(view.page);
+      const focusedPage = event.target?.closest?.('.notch-tab')?.dataset.page;
+      const current = pageOrder.indexOf(pageOrder.includes(focusedPage) ? focusedPage : view.page);
       const index = event.key === 'Home' ? 0 : event.key === 'End' ? pageOrder.length - 1
         : event.key === 'ArrowRight' ? (current + 1) % pageOrder.length
           : event.key === 'ArrowLeft' ? (current + pageOrder.length - 1) % pageOrder.length : -1;
@@ -158,7 +256,9 @@
       event.preventDefault();
       const page = pageOrder[index];
       selectPage(page);
-      tabButtons.get(page).focus({ preventScroll: true });
+      // fitTabs re-centred the pager window on the new selection, so its
+      // button is visible whichever track it landed in.
+      tabButtons.get(page)?.focus({ preventScroll: true });
     });
 
     let payload = null;
@@ -293,30 +393,22 @@
     }
 
     function paintTabs() {
-      tabs.setAttribute('aria-label', t('settings.notch.pages'));
-      previousTabs.setAttribute('aria-label', t('settings.notch.previousPage'));
-      nextTabs.setAttribute('aria-label', t('settings.notch.nextPage'));
+      leadTrack.setAttribute('aria-label', t('settings.notch.pages'));
       for (const [page, button] of tabButtons) {
         const selected = page === view.page;
         button.classList.toggle('is-selected', selected);
         button.setAttribute('aria-selected', String(selected));
-        button.tabIndex = selected ? 0 : -1;
+        button.title = pageTitle(page);
         if (page.startsWith(PLUGIN_PAGE_PREFIX)) {
-          const pluginState = pluginHost?.state('notch', page.slice(PLUGIN_PAGE_PREFIX.length));
-          button.title = pluginState?.title || payload?.panel?.pluginCatalog?.[page.slice(PLUGIN_PAGE_PREFIX.length)]?.title || t('notch.tab.plugin');
           const icon = button.querySelector('.notch-tab-plugin-icon');
-          const iconName = pluginState?.icon || payload?.panel?.pluginCatalog?.[page.slice(PLUGIN_PAGE_PREFIX.length)]?.icon || 'dot';
+          const iconName = pluginIconName(page);
           if (icon && icon.dataset.icon !== iconName && pluginViews) {
             icon.dataset.icon = iconName;
             icon.replaceChildren(pluginViews.iconNode(document, iconName, null, 15));
           }
-        } else {
-          button.title = t(`notch.tab.${page}`);
         }
         button.setAttribute('aria-label', button.title);
       }
-      tabPill.hidden = !view.page;
-      tabPill.style.transform = `translateX(${Math.max(0, pageOrder.indexOf(view.page)) * 36}px)`;
       fitTabs();
       for (const [page, pageNode] of pageNodes) {
         pageNode.classList.toggle('is-selected', page === view.page);
@@ -332,7 +424,8 @@
       const waiting = presentation.waitingSessionSummary(cell('stat:sessions')?.sessions || []).count;
       tabButtons.get('sessions').classList.toggle('has-badge', waiting > 0);
       const key = JSON.stringify([Boolean(rate), payload?.refreshEnabled, state.appearanceKey, state.locale]);
-      if (statusKey !== key) {
+      const structureChanged = statusKey !== key;
+      if (structureChanged) {
         statusKey = key;
         status.replaceChildren();
         if (rate) {
@@ -340,7 +433,12 @@
           reading.type = 'button';
           const icon = el('span', 'notch-rate-icon');
           icon.setAttribute('aria-hidden', 'true');
-          reading.append(icon, text('notch-rate-value', ''), text('notch-rate-unit', ''));
+          const probe = el('span', 'notch-rate-probe');
+          // Compact rounding and unit transitions can add a glyph (99,999
+          // becomes 100.0K). Measure the envelope, including localized units.
+          for (const boundary of [0.01, 0.99, 999, 9999, 88888, 99999, 999999, 9999999, 99999999, 999999999]) probe.append(text('', formatRate(boundary)));
+          probe.setAttribute('aria-hidden', 'true');
+          reading.append(icon, text('notch-rate-value', ''), text('notch-rate-unit', ''), probe);
           activateOnPress(reading, () => bridge.toggleRateMode());
           status.append(reading);
         }
@@ -350,16 +448,32 @@
         }
       }
       const reading = status.querySelector('.notch-rate');
-      if (!rate || !reading) return;
+      if (!rate || !reading) { if (structureChanged) reserveStatus(); return; }
       const hasSample = Number.isFinite(rate.rate);
       const idle = !hasSample || rate.idle === true;
       const value = hasSample ? formatRate(rate.rate) : '—';
       const unit = t(rate.rateMode === 'burn' ? 'edgeDock.rate.burnUnit' : 'edgeDock.rate.speedUnit');
       reading.classList.toggle('is-idle', idle);
       reading.querySelector('.notch-rate-value').textContent = value;
-      reading.querySelector('.notch-rate-unit').textContent = unit;
+      const unitNode = reading.querySelector('.notch-rate-unit');
+      const unitChanged = unitNode.textContent !== unit;
+      unitNode.textContent = unit;
       reading.title = `${t(!hasSample ? 'edgeDock.rate.noSample' : idle ? 'edgeDock.rate.idle' : 'edgeDock.rate.live')} · ${t('notch.rateToggle')}`;
       reading.setAttribute('aria-label', `${value} ${unit} · ${reading.title}`);
+      if (structureChanged || unitChanged) reserveStatus();
+    }
+
+    // Reserve compact-format rounding boundaries up front so normal rate changes do not
+    // squeeze the trailing rail mid-paint; the probe is absolutely positioned
+    // so it measures the upper bound without growing the status itself.
+    function reserveStatus() {
+      status.style.minWidth = '';
+      const probe = status.querySelector('.notch-rate-probe');
+      const value = [...status.querySelectorAll('.notch-rate-value')].find(node => !node.classList.contains('notch-rate-probe'));
+      const reserve = probe && value ? status.offsetWidth + Math.max(0, probe.offsetWidth - value.offsetWidth) : NaN;
+      if (!Number.isFinite(reserve) || reserve <= 0) return;
+      status.style.minWidth = `${Math.ceil(reserve)}px`;
+      fitTabs();
     }
 
     // ---- Home -----------------------------------------------------------------
@@ -1138,6 +1252,7 @@
       node.style.setProperty('--notch-band-height', `${attached ? geometry.height / zoom : PANEL_METRICS.band}px`);
       node.style.setProperty('--notch-gap-width', `${attached ? geometry.gapWidth / zoom : 0}px`);
       node.classList.toggle('is-attached', attached);
+      reserveStatus();
       fitTabs();
     }
 
@@ -1158,7 +1273,8 @@
     fuelObserver?.observe(pageNodes.get('home'));
     fuelObserver?.observe(pageNodes.get('limits'));
     const tabObserver = typeof window.ResizeObserver === 'function' ? new window.ResizeObserver(fitTabs) : null;
-    tabObserver?.observe(tabRail);
+    tabObserver?.observe(leadRail);
+    tabObserver?.observe(trailRail);
     window.addEventListener('pagehide', () => { suspend(); fuelObserver?.disconnect(); tabObserver?.disconnect(); }, { once: true });
     paintTabs();
     return { node, render, place, selectPage, suspend, pluginViewsChanged, contentHeight: panelContentHeight, view };

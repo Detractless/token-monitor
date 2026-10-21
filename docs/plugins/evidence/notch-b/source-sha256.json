@@ -1,0 +1,15 @@
+{
+  "docs/plugins/README.md": "0303b242a9b300a79b7c2ed0dbc954ce52ab7a75110fc5b9a80f1d3a89f9e92f",
+  "docs/plugins/plan.md": "7d738d1adbfb59a73ccca05c3e9789fc52973b963a0c46a11dce6cb93e0abed9",
+  "scripts/test-plugin-corrections-ui.cjs": "830a719ac864548a515e25ee8a33d8877669cd7ecba0ebde95551372b7ba4433",
+  "src/electron/renderer/app.js": "3ebdd3ab52129df0d462561c4b9d1e1fed9b8aa3e254c787cdfb798ce2fd3c04",
+  "src/electron/renderer/i18n.js": "21fc8d07b64f9a768d1196f325b4e89fbff350853c74dc6782bd9b9863e78a7d",
+  "src/electron/renderer/index.html": "b4d889f0ee134910284770274a86699eaf7e9c38d128696ede2d2d574e7f74cf",
+  "src/electron/renderer/notch/notch.css": "5d6d7a66bf728b466baadec84b755effa2e7e82aceba6c88790d19e2f2addd76",
+  "src/electron/renderer/notch/pageSettings.js": "e51149e636a0dc4f02ccac1eee6c1317a67f45f4d741bf613a2505245b9728df",
+  "src/electron/renderer/notch/panel.js": "850d31b3499f550ffd3241f9aa3e9871147a6673a5963eedda2b6a0db55eb6f5",
+  "src/electron/renderer/styles.css": "ae81ebd338c34ff62bad4e20c3c41c77c7caa8697a12ae33c8877341353fb4b3",
+  "tests/electron/notchPanel.test.js": "0045043e5afddeafd9eb5e069218aca45f67545f1f86adab9e745093ba68d6ac",
+  "tests/helpers/notchPanel.js": "2d7f97e2b51013548a484bf1229eda963773a85025caef2437b11849cd3ac148",
+  "tests/electron/notchPageSettings.test.js": "387d96bb39201fc999acd8bd696f02c8420038ec05007180b50935c475b4bb48"
+}

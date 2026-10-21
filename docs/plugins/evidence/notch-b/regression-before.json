@@ -1,0 +1,15 @@
+{
+  "scratch": "/var/folders/fy/4wmcgtwj02966_f8fxrqfvwc0000gn/T/tm-plugin-corrections-Ef026t",
+  "passed": 39,
+  "total": 41,
+  "failures": [
+    {
+      "name": "tab-focus-survives-live-push",
+      "ok": false
+    },
+    {
+      "name": "paged-away-selection-keeps-keyboard-entry",
+      "ok": false
+    }
+  ]
+}

@@ -1,0 +1,314 @@
+[
+  {
+    "name": "real-System-Monitor-explicit-bindings-Roll",
+    "ok": true
+  },
+  {
+    "name": "before-explicit-captions-jump",
+    "ok": true
+  },
+  {
+    "name": "reduced-motion-settles-rings",
+    "ok": true
+  },
+  {
+    "name": "real-System-Monitor-Count",
+    "ok": true
+  },
+  {
+    "name": "Count-exact-final",
+    "ok": true
+  },
+  {
+    "name": "author-none-stays-static",
+    "ok": true
+  },
+  {
+    "name": "all-selected-pages-available",
+    "ok": true
+  },
+  {
+    "name": "camera-safe-480-0.75",
+    "ok": true,
+    "detail": {
+      "slots": 5,
+      "lead": 165.5,
+      "gap": 170,
+      "trail": 354.5
+    }
+  },
+  {
+    "name": "trail-clear-of-status-480-0.75",
+    "ok": true,
+    "detail": {
+      "track": 357.5,
+      "status": 395.75
+    }
+  },
+  {
+    "name": "camera-safe-640-0.75",
+    "ok": true,
+    "detail": {
+      "slots": 9,
+      "lead": 245.5,
+      "gap": 250,
+      "trail": 434.5
+    }
+  },
+  {
+    "name": "trail-clear-of-status-640-0.75",
+    "ok": true,
+    "detail": {
+      "track": 490,
+      "status": 555.75
+    }
+  },
+  {
+    "name": "camera-safe-760-0.75",
+    "ok": true,
+    "detail": {
+      "slots": 9,
+      "lead": 305.5,
+      "gap": 310,
+      "trail": 494.5
+    }
+  },
+  {
+    "name": "trail-clear-of-status-760-0.75",
+    "ok": true,
+    "detail": {
+      "track": 497.5,
+      "status": 675.75
+    }
+  },
+  {
+    "name": "camera-safe-480-1",
+    "ok": true,
+    "detail": {
+      "slots": 3,
+      "lead": 164,
+      "gap": 170,
+      "trail": 356
+    }
+  },
+  {
+    "name": "trail-clear-of-status-480-1",
+    "ok": true,
+    "detail": {
+      "track": 360,
+      "status": 366
+    }
+  },
+  {
+    "name": "camera-safe-640-1",
+    "ok": true,
+    "detail": {
+      "slots": 8,
+      "lead": 244,
+      "gap": 250,
+      "trail": 436
+    }
+  },
+  {
+    "name": "trail-clear-of-status-640-1",
+    "ok": true,
+    "detail": {
+      "track": 510,
+      "status": 521
+    }
+  },
+  {
+    "name": "camera-safe-760-1",
+    "ok": true,
+    "detail": {
+      "slots": 9,
+      "lead": 304,
+      "gap": 310,
+      "trail": 496
+    }
+  },
+  {
+    "name": "trail-clear-of-status-760-1",
+    "ok": true,
+    "detail": {
+      "track": 606,
+      "status": 641
+    }
+  },
+  {
+    "name": "camera-safe-480-1.5",
+    "ok": true,
+    "detail": {
+      "slots": 1,
+      "lead": 161,
+      "gap": 170,
+      "trail": 359
+    }
+  },
+  {
+    "name": "trail-clear-of-status-480-1.5",
+    "ok": true,
+    "detail": {
+      "track": 365,
+      "status": 374
+    }
+  },
+  {
+    "name": "camera-safe-640-1.5",
+    "ok": true,
+    "detail": {
+      "slots": 3,
+      "lead": 241,
+      "gap": 250,
+      "trail": 439
+    }
+  },
+  {
+    "name": "trail-clear-of-status-640-1.5",
+    "ok": true,
+    "detail": {
+      "track": 445,
+      "status": 454
+    }
+  },
+  {
+    "name": "camera-safe-760-1.5",
+    "ok": true,
+    "detail": {
+      "slots": 4,
+      "lead": 301,
+      "gap": 310,
+      "trail": 499
+    }
+  },
+  {
+    "name": "trail-clear-of-status-760-1.5",
+    "ok": true,
+    "detail": {
+      "track": 505,
+      "status": 571.5
+    }
+  },
+  {
+    "name": "seven-pages-no-steps",
+    "ok": true,
+    "detail": {
+      "visible": 7,
+      "lead": 182,
+      "trail": 75,
+      "status": 97
+    }
+  },
+  {
+    "name": "tab-focus-survives-live-push",
+    "ok": true
+  },
+  {
+    "name": "first-large-reading-keeps-tab-capacity",
+    "ok": true,
+    "detail": {
+      "before": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page1|plugin:demo/page2",
+      "after": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page1|plugin:demo/page2"
+    }
+  },
+  {
+    "name": "pager-when-both-full",
+    "ok": true,
+    "detail": {
+      "T": 2,
+      "steps": 2
+    }
+  },
+  {
+    "name": "pager-steps-without-selecting",
+    "ok": true,
+    "detail": {
+      "before": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page4",
+      "after": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page5"
+    }
+  },
+  {
+    "name": "paged-away-selection-keeps-keyboard-entry",
+    "ok": true
+  },
+  {
+    "name": "keyboard-reaches-last",
+    "ok": true
+  },
+  {
+    "name": "rate-change-keeps-tabs",
+    "ok": true,
+    "detail": {
+      "before": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page8",
+      "after": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page8"
+    }
+  },
+  {
+    "name": "detached-lead-only",
+    "ok": true,
+    "detail": {
+      "trail": 0,
+      "slots": 13
+    }
+  },
+  {
+    "name": "only-visible-pages-demand-data",
+    "ok": true
+  },
+  {
+    "name": "removed-selected-page-releases-demand",
+    "ok": true
+  },
+  {
+    "name": "settings-chips-render",
+    "ok": true
+  },
+  {
+    "name": "unified-settings-persist-successive-choices",
+    "ok": true
+  },
+  {
+    "name": "plugin-toggle-uses-placement-contract",
+    "ok": true
+  },
+  {
+    "name": "failed-save-restores-choice",
+    "ok": true
+  },
+  {
+    "name": "settings-retains-focus",
+    "ok": true
+  },
+  {
+    "name": "rate-mode-toggle-retains-focus",
+    "ok": true
+  },
+  {
+    "name": "formatted-rounding-keeps-capacity-630",
+    "ok": true,
+    "detail": {
+      "before": "plugin:demo/page4|plugin:demo/page5|plugin:demo/page6",
+      "after": "plugin:demo/page4|plugin:demo/page5|plugin:demo/page6",
+      "beforeWidth": 97,
+      "afterWidth": 97
+    }
+  },
+  {
+    "name": "formatted-rounding-keeps-capacity-700",
+    "ok": true,
+    "detail": {
+      "before": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page5",
+      "after": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page5",
+      "beforeWidth": 97,
+      "afterWidth": 97
+    }
+  },
+  {
+    "name": "fallback-keyboard-follows-focus",
+    "ok": true,
+    "detail": {
+      "entry": "home",
+      "selected": "limits"
+    }
+  }
+]

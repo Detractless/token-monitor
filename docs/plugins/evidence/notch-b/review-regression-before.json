@@ -1,0 +1,39 @@
+{
+  "scratch": "/var/folders/fy/4wmcgtwj02966_f8fxrqfvwc0000gn/T/tm-plugin-corrections-k3suXS",
+  "passed": 41,
+  "total": 45,
+  "failures": [
+    {
+      "name": "rate-mode-toggle-retains-focus",
+      "ok": false
+    },
+    {
+      "name": "formatted-rounding-keeps-capacity-630",
+      "ok": false,
+      "detail": {
+        "before": "home|limits|sessions|breakdown|plugin:demo/page5",
+        "after": "plugin:demo/page4|plugin:demo/page5|plugin:demo/page6",
+        "beforeWidth": 90,
+        "afterWidth": 96.859375
+      }
+    },
+    {
+      "name": "formatted-rounding-keeps-capacity-700",
+      "ok": false,
+      "detail": {
+        "before": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page5|plugin:demo/page6",
+        "after": "home|limits|sessions|breakdown|plugin:demo/page0|plugin:demo/page5",
+        "beforeWidth": 90,
+        "afterWidth": 96.859375
+      }
+    },
+    {
+      "name": "fallback-keyboard-follows-focus",
+      "ok": false,
+      "detail": {
+        "entry": "home",
+        "selected": "plugin:demo/page5"
+      }
+    }
+  ]
+}

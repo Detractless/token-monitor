@@ -12,6 +12,21 @@ env -u ELECTRON_RUN_AS_NODE npm run verify:plugins -- --out /tmp/plugin-report.j
 
 The Electron scripts use disposable user data and fixture APIs. They do not start the user's primary app or publish packages. The isolation script deliberately creates flooding, busy and memory-consuming Workers; run it as a separate acceptance check, not inside normal `npm test`.
 
+## Notch B navigation follow-up
+
+The local B layout fills the camera-left lane in normal page order, then continues into the right lane before the rate/refresh controls. Whole tabs are distributed in discrete slots; only overflow across both lanes shows the small step controls inside a rounded track. Paging the tab window does not change the open content. Arrow keys navigate relative to the focused tab, including when the selected tab has been paged out of sight. Without a camera, one continuous rail occupies the available space before status.
+
+The original Notch settings use the same page/icon choices as compact toggle chips. Selected/unselected/unavailable states, failed saves, concurrent refresh and focus restoration use the existing placement/settings paths. The isolated running App showed seven choices on two lines at 380 CSS px (the choice block measured about 127 CSS px), with no horizontal overflow; this is temporary acceptance data, not a primary-user profile.
+
+- Final complete `npm run verify`: **7,720 passed, 8 skipped, 0 failed**, including lint. An earlier run after correction had one native watcher timeout (7,719 pass, 8 skipped); its standalone 26-test suite and the subsequent full rerun both passed. No watcher code was changed.
+- Focused Node tests: **86/86**.
+- Isolated Electron correction harness: **45/45**, with production compact-number formatting, camera/rail geometry across 480/640/760 widths and .75/1/1.5 zoom, split tracks, discrete overflow, demand release, settings saves and keyboard focus.
+- Regression evidence: live-push tab focus and missing keyboard entry failed before the first correction; independent review then found mode-switch focus loss, navigation from a fallback entry and compact rounding at 630/700 CSS px. The checked-in harness fails four assertions before those three fixes and passes afterward. [Results](evidence/notch-b/results.json) · [Before correction](evidence/notch-b/review-regression-before.json).
+
+Independent correction review: **bounded GO**, Node 86/86, checked-in UI 45/45; exact old-snapshot probes 57/61 become 61/61 on the final snapshot. All 13 hashes matched before/after. [Report](evidence/notch-b/review-round2.md). The reviewer inspected the earlier watcher-failure log; the separate final parent rerun subsequently passed in full, recorded in [the final summary](evidence/notch-b/verify-final-summary.txt).
+
+[Rendered comparison and isolated App settings](notch-b-gallery.html). Synthetic camera geometry is deliberately distinguished from the running App settings proof. Physical Notch geometry/hover/compositing, VoiceOver, IME, Windows/Linux and packaging remain untested. The review is bounded to this UI delta; runtime isolation and author-web-page proposals were not reopened.
+
 ## PR #1164 follow-up on 230e819
 
 - `npm run verify`: **7,712 passed, 8 skipped, 0 failed**, including lint. The first run exposed five old Notch fixture failures because its extracted function lacked the new page-choice helper; its dependencies were updated without removing assertions.
