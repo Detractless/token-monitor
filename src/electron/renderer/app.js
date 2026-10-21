@@ -270,6 +270,14 @@ const HOME_MODULE_OPTIONS = [
   { id: 'device', labelKey: 'home.devices', viewId: 'device' },
   { id: 'trends', labelKey: 'home.activity', viewId: 'trends' }
 ];
+const pluginViewsApi = window.TokenMonitorPluginViews;
+const pluginPlacementsApi = window.TokenMonitorPluginPlacements;
+// Assigned in the Plugins block below; read lazily by Home, tray and settings.
+let pluginViewHost = null;
+let pluginMainPages = null;
+function pluginPageOptions() { return window.TokenMonitorPluginMainPages?.entries(state.pluginCatalog) || []; }
+let pluginApi = null;
+let pluginSettingsPanel = null;
 const VIEW_SWITCHER_LONG_PRESS_MS = 420;
 const VIEW_SWITCHER_HOVER_CLOSE_MS = 160;
 const VIEW_ICON_CLASSES = {
@@ -295,7 +303,7 @@ const TOKEN_MONITOR_ISSUES_URL = `${TOKEN_MONITOR_REPOSITORY_URL}/issues/new/cho
 const TOKEN_MONITOR_WEBSITE_URL = 'https://javis-ai.com/token-monitor/';
 const TOKEN_MONITOR_WSL_SQLITE_GUIDE_URL = `${TOKEN_MONITOR_REPOSITORY_URL}/blob/main/docs/wsl-sqlite-setup.md`;
 const serviceStatusProviderPreferencesApi = window.TokenMonitorServiceStatusProviderPreferences;
-const SETTINGS_SECTION_IDS = ['general', 'main', 'window', 'appearance', 'tools', 'limits', 'subscriptions', 'sync'];
+const SETTINGS_SECTION_IDS = ['general', 'main', 'window', 'appearance', 'plugins', 'tools', 'limits', 'subscriptions', 'sync'];
 const REFRESH_BUTTON_FEEDBACK_MS = 700;
 const LIVE_TOKEN_RATE_ACTIVE_MS = 8000;
 const LIVE_TOKEN_RATE_CLEAR_MS = 3 * 60 * 1000;
@@ -306,7 +314,7 @@ let initialBreakdownPreferenceApplied = typeof initialViewState.breakdown === 's
 
 function normalizeInitialViewValue(value, allowed, fallback) {
   const raw = String(value || '').trim();
-  return allowed.has(raw) ? raw : fallback;
+  return allowed.has(raw) || (allowed === viewBreakdownValues && pluginPlacementsApi.isHomeToken(raw)) ? raw : fallback;
 }
 
 const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, windowVisible: new URLSearchParams(window.location.search).get('windowHidden') !== '1', stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, factoryAccountExpanded: false, factoryPendingCheckSince: 0, clineAccountExpanded: false, clinePendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, volcengineAgentExpanded: false, qoderAccountExpanded: false, qoderPendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', antigravityAccountExpanded: false, antigravityAccountError: '', antigravitySignInBusy: false, workbuddyAccountExpanded: false, workbuddyAccountError: '', workbuddySignInBusy: false, workbuddyCancelBusy: false, workbuddyMutationBusy: false, workbuddyLoginAttempt: 0, workbuddyLoginStatusKey: '', workbuddyAccountsRevision: 0, copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false, toolSearchQuery: '', limitProviderSearchQuery: '', accountPanelMessages: {} };
@@ -562,6 +570,8 @@ Object.assign(els, {
   mainSettingsSummary: document.getElementById('mainSettingsSummary'),
   windowSettingsSummary: document.getElementById('windowSettingsSummary'),
   appearanceSettingsSummary: document.getElementById('appearanceSettingsSummary'),
+  pluginsSettingsSummary: document.getElementById('pluginsSettingsSummary'),
+  pluginsEnabledInput: document.getElementById('pluginsEnabledInput'),
   backgroundImageStatus: document.getElementById('backgroundImageStatus'),
   chooseBackgroundImageButton: document.getElementById('chooseBackgroundImageButton'),
   clearBackgroundImageButton: document.getElementById('clearBackgroundImageButton'),
@@ -781,6 +791,7 @@ function setSettingsSectionExpanded(section, expanded) {
   state.settingsSections[id] = next;
   applySettingsSectionDom(id, next);
   if (id === 'sync' && next) void syncContentForm?.refresh();
+  if (id === 'plugins' && next) void pluginSettingsPanel?.refresh().then(renderSettingsSummaries);
 }
 
 // Expanding a section auto-collapses the previously open one. When that one
@@ -875,6 +886,12 @@ function viewsSummary() {
 
 function settingsSectionSummary(section) {
   if (!state.settings) return '';
+  if (section === 'plugins') {
+    if (state.settings.pluginsEnabled === false) return t('settings.summary.off');
+    const plugins = state.pluginCatalog?.plugins || [];
+    if (!plugins.length) return '';
+    return t('settings.summary.plugins', { active: plugins.filter((plugin) => plugin.status === 'active').length, total: plugins.length });
+  }
   if (section === 'sync') {
     const modeKeys = { host: 'settings.sync.hostHub', client: 'settings.sync.connectHub', icloud: 'settings.sync.icloud' };
     const label = t(modeKeys[state.settings.hubMode] || 'settings.sync.localOnly');
@@ -1937,6 +1954,7 @@ function settleRowNumberAnimations() {
 function applyReduceMotionPreference(value) {
   const preference = motionPreferenceApi.normalize(value);
   document.documentElement.dataset.reduceMotion = preference;
+  pluginViewHost?.refreshMotion();
   if (motionPreferenceApi.shouldReduceMotion(preference, reducedMotionMedia?.matches)) settleMotionAnimations();
   return preference;
 }
@@ -3268,20 +3286,22 @@ function availableBreakdownIds() {
   const order = ['home', baseBreakdownOrder[0], 'status', 'trends', ...baseBreakdownOrder.slice(1)];
   let available = state.settings?.historyEnabled === false ? order.filter((id) => id !== 'trends') : order;
   if (state.settings?.projectsEnabled === false) available = available.filter((id) => id !== 'project');
-  return limitViewAvailable() ? [...available, 'limits'] : available;
+  return [...(limitViewAvailable() ? [...available, 'limits'] : available), ...pluginPageOptions().map(page => page.id)];
 }
 
 function visibleBreakdownOrder() {
-  return viewDisplayPreferencesApi.visibleViewOrder({
+  return [...viewDisplayPreferencesApi.visibleViewOrder({
     views: VIEW_DISPLAY_OPTIONS,
     orderValue: effectiveViewDisplayOrderValue(),
     hiddenValue: state.settings?.hiddenViews,
     availableIds: availableBreakdownIds(),
     includeIds: directBreakdownOverride ? [directBreakdownOverride] : []
-  });
+  }), ...pluginPageOptions().map(page => page.id)];
 }
 
 function ensureBreakdownVisible() {
+  if (pluginPageOptions().some(page => page.id === state.breakdown)) return;
+  if (!state.pluginCatalog && pluginPlacementsApi.isHomeToken(state.breakdown)) return;
   const availableIds = availableBreakdownIds();
   if (directBreakdownOverride === state.breakdown && availableIds.includes(state.breakdown)) return;
   directBreakdownOverride = null;
@@ -5594,6 +5614,8 @@ function renderTrends() {
 }
 
 function viewLabelById(id) {
+  const page = pluginPageOptions().find(page => page.id === id);
+  if (page) return page.title;
   const view = VIEW_DISPLAY_OPTIONS.find((option) => option.id === id);
   return view ? viewLabel(view) : id;
 }
@@ -5987,10 +6009,27 @@ function syncPeriodMenu() {
   }
 }
 
+// Built-in Home modules plus the plugin views the user has placed on Home.
+// Only placed views count as known: an active plugin's other views must not be
+// appended to the order the way a newly shipped built-in module would be.
+function homeModuleOptions() {
+  const placed = new Set(String(state.settings?.homeModuleOrder || '').split(',').map((id) => id.trim().toLowerCase()));
+  const extra = [];
+  for (const plugin of state.pluginCatalog?.plugins || []) {
+    if (plugin.status !== 'active') continue;
+    for (const view of plugin.views || []) {
+      const id = pluginPlacementsApi.homeToken(view.ref);
+      if (!view.surfaces.includes('home') || !placed.has(id)) continue;
+      extra.push({ id, label: view.title, ref: view.ref, pluginName: plugin.name, icon: view.icon });
+    }
+  }
+  return [...HOME_MODULE_OPTIONS, ...extra];
+}
+
 function homeModuleIds() {
   const hidden = hiddenHomeModuleSet();
   return homeModulePreferencesApi
-    .orderedHomeModules(HOME_MODULE_OPTIONS, state.settings?.homeModuleOrder)
+    .orderedHomeModules(homeModuleOptions(), state.settings?.homeModuleOrder)
     .map((module) => module.id)
     .filter((id) => !hidden.has(id));
 }
@@ -6004,7 +6043,7 @@ function nextBreakdown(value) {
 
 function viewSwitcherIcon(id) {
   const icon = document.createElement('span');
-  icon.className = `view-switcher-icon ${VIEW_ICON_CLASSES[id] || 'view-icon-home'}`;
+  icon.className = `view-switcher-icon ${VIEW_ICON_CLASSES[id] || (pluginPlacementsApi.isHomeToken(id) ? 'view-icon-plugin' : 'view-icon-home')}`;
   icon.setAttribute('aria-hidden', 'true');
   return icon;
 }
@@ -6041,6 +6080,7 @@ function updateViewSwitcherOpenState({ focusMenu = false, focusDisclosure = fals
   for (const item of menu.querySelectorAll('.view-switcher-menu-item')) {
     item.tabIndex = state.viewSwitcherOpen && item.classList.contains('is-current') ? 0 : -1;
   }
+  if (state.viewSwitcherOpen) requestAnimationFrame(() => menu.querySelector('.is-current')?.scrollIntoView({ block: 'nearest' }));
   if (focusMenu) requestAnimationFrame(() => menu.querySelector('.is-current')?.focus());
   if (focusDisclosure) requestAnimationFrame(() => disclosure.focus());
   return true;
@@ -6169,6 +6209,7 @@ function renderViewSwitcher({ focusMenu = false, focusDisclosure = false } = {})
   els.viewSwitcher.classList.toggle('is-open', state.viewSwitcherOpen);
   els.viewSwitcher.classList.toggle('has-opened', state.viewSwitcherHasOpened);
   els.viewSwitcher.replaceChildren(current, disclosure, menu);
+  if (state.viewSwitcherOpen) requestAnimationFrame(() => menu.querySelector('.is-current')?.scrollIntoView({ block: 'nearest' }));
   if (focusMenu) requestAnimationFrame(() => menu.querySelector('.is-current')?.focus());
   if (focusDisclosure) requestAnimationFrame(() => disclosure.focus());
 }
@@ -6176,19 +6217,22 @@ function renderViewSwitcher({ focusMenu = false, focusDisclosure = false } = {})
 function homeModuleShell(kind, title, viewId, meta = '') {
   const module = document.createElement('section');
   module.className = `home-module home-module-${kind}`;
-  module.tabIndex = 0;
-  module.setAttribute('role', 'button');
   module.setAttribute('aria-label', title);
-  module.addEventListener('click', (event) => {
-    if (event.target.closest('.home-activity-scroll')) return;
-    renderBreakdownChange(viewId, { fromHome: true });
-  });
-  module.addEventListener('keydown', (event) => {
-    if (event.target !== module) return;
-    if (event.key !== 'Enter' && event.key !== ' ') return;
-    event.preventDefault();
-    renderBreakdownChange(viewId, { fromHome: true });
-  });
+  // Plugin modules have no detail view to jump to.
+  if (viewId) {
+    module.tabIndex = 0;
+    module.setAttribute('role', 'button');
+    module.addEventListener('click', (event) => {
+      if (event.target.closest('.home-activity-scroll')) return;
+      renderBreakdownChange(viewId, { fromHome: true });
+    });
+    module.addEventListener('keydown', (event) => {
+      if (event.target !== module) return;
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      renderBreakdownChange(viewId, { fromHome: true });
+    });
+  }
   const head = document.createElement('div');
   head.className = 'home-module-head';
   const titleWrap = document.createElement('div');
@@ -6205,10 +6249,12 @@ function homeModuleShell(kind, title, viewId, meta = '') {
     metaText.textContent = meta;
     end.append(metaText);
   }
-  const icon = document.createElement('span');
-  icon.className = `home-module-jump ${VIEW_ICON_CLASSES[viewId] || ''}`;
-  icon.setAttribute('aria-hidden', 'true');
-  end.append(icon);
+  if (viewId) {
+    const icon = document.createElement('span');
+    icon.className = `home-module-jump ${VIEW_ICON_CLASSES[viewId] || ''}`;
+    icon.setAttribute('aria-hidden', 'true');
+    end.append(icon);
+  }
   head.append(titleWrap, end);
   const body = document.createElement('div');
   body.className = 'home-module-body';
@@ -7077,6 +7123,27 @@ function renderHomeTrendsModule() {
   return module;
 }
 
+// A plugin view on Home: the shell is ours, the body is the plugin's resolved
+// view, repainted in place by plugin pushes without re-rendering Home.
+function renderHomePluginModule(id) {
+  const option = homeModuleOptions().find((entry) => entry.id === id);
+  const ref = pluginPlacementsApi.refFromHomeToken(id);
+  const existing = [...els.homePanel.children].find(node => node.dataset.pluginRef === ref);
+  if (existing) {
+    existing.setAttribute('aria-label', option?.label || ref);
+    const label = existing.querySelector('.home-module-label'); if (label) label.textContent = option?.label || ref;
+    const meta = existing.querySelector('.home-module-meta'); if (meta) meta.textContent = option?.pluginName || '';
+    return existing;
+  }
+  const { module, body } = homeModuleShell('plugin', option?.label || ref, null, option?.pluginName || '');
+  module.dataset.pluginRef = ref;
+  const mount = document.createElement('div');
+  mount.className = 'home-plugin-body';
+  body.append(mount);
+  pluginViewHost?.mount(mount, ref, 'home');
+  return module;
+}
+
 function renderHome() {
   if (!els.homePanel) return;
   if (sessionTooltipShouldHoldRender()) {
@@ -7122,9 +7189,18 @@ function renderHome() {
       sessionRows = window.TokenMonitorEdgeDockPresentation.recentSessionRows(state.stats, homeModulePreferencesApi.homeModuleCount(state.settings, 'session'), { ...sessionPresentationOptions(), includeRunningBeyondCap: true });
       return renderHomeSessionModule(sessionRows);
     }
+    if (homeModulePreferencesApi.isPluginModuleId(id)) return renderHomePluginModule(id);
     return renderHomeTrendsModule();
   });
-  els.homePanel.replaceChildren(...nodes);
+  // Reconcile siblings without detaching retained plugin controls. Collector
+  // pushes must not discard focused drafts or cancel captured drawing gestures.
+  for (const child of [...els.homePanel.children]) if (!nodes.includes(child)) child.remove();
+  nodes.forEach((node, index) => {
+    const current = els.homePanel.children[index];
+    if (node === current) return;
+    if (node.parentNode === els.homePanel && els.homePanel.moveBefore) els.homePanel.moveBefore(node, current || null);
+    else els.homePanel.insertBefore(node, current || null);
+  });
   if (moduleIds.includes('session')) scheduleHomeSessionRepaint(sessionRows);
   // setupHomeActivityScroller first runs while its module is detached, where
   // scrollWidth can equal clientWidth. Apply again synchronously now that the DOM is
@@ -7159,6 +7235,7 @@ function setRendererSettings(next) {
     !== tokenNumberAnimationApi.normalize(next.tokenNumberAnimation);
   state.settings = next;
   if (animationChanged) {
+    pluginViewHost?.refreshMotion();
     cancelNumberAnimation();
     settleRowNumberAnimations();
     numberAnimValue = state.currentTotal;
@@ -7179,6 +7256,19 @@ function render() {
   const surface = visibleStatsSurface();
   if (surface !== 'main') {
     if (!surface) statsRenderScheduler.request();
+    return;
+  }
+  ensureBreakdownVisible();
+  const pluginPage = pluginMainPages?.render(pluginPageOptions(), state.breakdown) || false;
+  els.shell.classList.toggle('plugin-page-mode', pluginPage);
+  if (pluginPage) {
+    stopHomeSessionRepaint(); stopSessionStatusRepaint(); stopServiceStatusTicker(); hideHomeActivityTooltip();
+    cancelNumberAnimation();
+    state.openSession = null;
+    for (const panel of [els.homePanel, els.breakdown, els.limitsPanel, els.trendsPanel, els.serviceStatusPanel,
+      els.sessionDetail, els.sessionDetailHead, els.sessionPagerHost, els.toolDetailFooter, els.projectBreakdownFooter, els.fixedPeriodMessage, els.viewBackRow]) panel?.classList.add('hidden');
+    els.shell.classList.remove('home-mode', 'session-mode');
+    renderViewSwitcher(); signalContentReady();
     return;
   }
   if (!state.stats) return;
@@ -7872,6 +7962,28 @@ function renderThemePresetChips() {
     chip.append(dot, label);
     chip.addEventListener('click', () => selectThemePreset(preset.id));
     els.themePresetChips.appendChild(chip);
+  }
+  // Skins from active plugins sit beside the built-in presets; applying one
+  // writes ordinary theme colours, so it survives the plugin being removed.
+  const resolved = themePresetsApi.mergeThemeColors(state.settings?.themeColors);
+  for (const plugin of state.pluginCatalog?.plugins || []) {
+    if (plugin.status !== 'active') continue;
+    for (const skin of plugin.skins || []) {
+      const colors = themePresetsApi.mergeThemeColors({ ...state.settings?.themeColors, ...skin.colors });
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'theme-preset-chip theme-preset-chip-plugin';
+      chip.classList.toggle('active', !activeId && themePresetsApi.INTERFACE_COLOR_KEYS.every((key) => resolved[key] === colors[key]));
+      chip.title = t('settings.plugins.skinFrom', { name: plugin.name });
+      const dot = document.createElement('span');
+      dot.className = 'theme-preset-dot';
+      dot.style.background = colors.accent;
+      const label = document.createElement('span');
+      label.textContent = skin.name;
+      chip.append(dot, label);
+      chip.addEventListener('click', () => void applyPluginSkin(skin));
+      els.themePresetChips.appendChild(chip);
+    }
   }
 }
 
@@ -9387,6 +9499,7 @@ function syncSettingsForm() {
   );
   els.swapSettingsRefreshInput.checked = state.settings.settingsInTitlebar === true;
   els.discordRpcInput.checked = Boolean(state.settings.discordRpcEnabled);
+  if (els.pluginsEnabledInput) els.pluginsEnabledInput.checked = state.settings.pluginsEnabled !== false;
   els.floatingBubbleInput.checked = state.settings.floatingBubbleEnabled === true;
   const floatingBubbleTrigger = state.settings.floatingBubbleTrigger === 'hover' ? 'hover' : 'click';
   for (const input of els.floatingBubbleTriggerInputs || []) input.checked = input.value === floatingBubbleTrigger;
@@ -9477,7 +9590,7 @@ function disabledViewIds() {
 }
 
 function hiddenHomeModuleSet() {
-  return new Set(homeModulePreferencesApi.normalizeHiddenHomeModules(state.settings?.hiddenHomeModules, HOME_MODULE_OPTIONS).split(',').filter(Boolean));
+  return new Set(homeModulePreferencesApi.normalizeHiddenHomeModules(state.settings?.hiddenHomeModules, homeModuleOptions()).split(',').filter(Boolean));
 }
 
 function hiddenHomeLimitProviderSet() {
@@ -10115,8 +10228,9 @@ function renderHomeSettingsList() {
   wrap.id = 'homeSettingsList';
   wrap.className = 'settings-nested-list home-settings-list';
   const hidden = hiddenHomeModuleSet();
-  const modules = homeModulePreferencesApi.orderedHomeModules(HOME_MODULE_OPTIONS, state.settings?.homeModuleOrder);
-  const hasCustomOrder = homeModulePreferencesApi.normalizeHomeModuleOrder(state.settings?.homeModuleOrder, HOME_MODULE_OPTIONS).join(',') !== homeModulePreferencesApi.DEFAULT_HOME_MODULE_ORDER;
+  const modules = homeModulePreferencesApi.orderedHomeModules(homeModuleOptions(), state.settings?.homeModuleOrder);
+  const hasCustomOrder = homeModulePreferencesApi.normalizeHomeModuleOrder(state.settings?.homeModuleOrder, HOME_MODULE_OPTIONS)
+    .filter((id) => !homeModulePreferencesApi.isPluginModuleId(id)).join(',') !== homeModulePreferencesApi.DEFAULT_HOME_MODULE_ORDER;
   const header = document.createElement('div');
   header.className = 'settings-note-row home-settings-header';
   const note = document.createElement('p');
@@ -10148,7 +10262,7 @@ function renderHomeSettingsList() {
   wrap.append(header);
   for (const moduleOption of modules) {
     const id = moduleOption.id;
-    const label = t(moduleOption.labelKey);
+    const label = moduleOption.label || t(moduleOption.labelKey);
     const isHidden = hidden.has(id);
     const row = document.createElement('div');
     row.className = 'home-module-preference-row';
@@ -12338,21 +12452,24 @@ async function onHomeModuleVisibilityToggle(moduleId) {
 }
 
 async function onHomeModuleMove(moduleId, direction) {
-  const next = homeModulePreferencesApi.moveHomeModuleOrder(state.settings?.homeModuleOrder, HOME_MODULE_OPTIONS, moduleId, direction);
+  const next = homeModulePreferencesApi.moveHomeModuleOrder(state.settings?.homeModuleOrder, homeModuleOptions(), moduleId, direction);
   await saveSettings({ homeModuleOrder: next });
   renderHomeIfVisible();
 }
 
 async function onHomeModuleReorder(moduleId, targetIndex) {
-  const current = homeModulePreferencesApi.normalizeHomeModuleOrder(state.settings?.homeModuleOrder, HOME_MODULE_OPTIONS).join(',');
-  const next = homeModulePreferencesApi.reorderHomeModuleOrder(state.settings?.homeModuleOrder, HOME_MODULE_OPTIONS, moduleId, targetIndex);
+  const current = homeModulePreferencesApi.normalizeHomeModuleOrder(state.settings?.homeModuleOrder, homeModuleOptions()).join(',');
+  const next = homeModulePreferencesApi.reorderHomeModuleOrder(state.settings?.homeModuleOrder, homeModuleOptions(), moduleId, targetIndex);
   if (next === current) return;
   await saveSettings({ homeModuleOrder: next });
   renderHomeIfVisible();
 }
 
 async function resetHomeModuleOrder() {
-  await saveSettings({ homeModuleOrder: homeModulePreferencesApi.DEFAULT_HOME_MODULE_ORDER });
+  // Resetting the built-in order keeps placed plugin views, after the built-ins.
+  const pluginModules = homeModulePreferencesApi.normalizeHomeModuleOrder(state.settings?.homeModuleOrder, HOME_MODULE_OPTIONS)
+    .filter((id) => homeModulePreferencesApi.isPluginModuleId(id));
+  await saveSettings({ homeModuleOrder: [homeModulePreferencesApi.DEFAULT_HOME_MODULE_ORDER, ...pluginModules].join(',') });
   renderHomeIfVisible();
 }
 
@@ -12590,6 +12707,134 @@ window.addEventListener('blur', () => {
   if (state.viewSwitcherOpen) setViewSwitcherOpen(false);
 });
 
+// ---- Plugins -------------------------------------------------------------
+// The catalog (from main) decides which plugin views exist; the view host
+// paints resolved views into Home and reports what is visible, so main only
+// samples sources something on screen, or a background rule, needs.
+const pluginBridge = window.tokenMonitor.plugins || null;
+pluginViewHost = pluginViewsApi && pluginBridge ? pluginViewsApi.createPluginViewHost({
+  document,
+  window,
+  t,
+  onInteraction: (surface, ref, input, revision) => pluginBridge.interact(surface, ref, input, revision),
+  onDemand: (surface, refs) => pluginBridge.setDemand(surface, refs),
+  motionAllowed: () => !prefersReducedMotion(),
+  motionMode: () => tokenNumberAnimationApi.normalize(state.settings?.tokenNumberAnimation),
+  isSurfaceActive: surface => surface !== 'page' || (!isRendererWindowHidden() && !isSettingsPanelOpen() && !state.floatingBubble.collapsed)
+}) : null;
+pluginMainPages = pluginViewHost ? window.TokenMonitorPluginMainPages.create({
+  document, container: document.getElementById('pluginMainPanel'), host: pluginViewHost, t,
+  openWindow: ref => pluginBridge.openPage(ref).catch(error => setStatus(error.message, true))
+}) : null;
+if (pluginViewHost) new MutationObserver(() => pluginViewHost.refreshDemand()).observe(els.shell, { attributes: true, attributeFilter: ['class'] });
+let pluginCatalogKey = '';
+
+function applyPluginCatalog(list) {
+  if (!list) return list;
+  state.pluginCatalog = list;
+  // Home and the theme chips depend only on which plugins and views are
+  // active; process metrics refresh every few seconds and must not re-render.
+  const key = JSON.stringify((list.plugins || []).map((plugin) => [plugin.id, plugin.status,
+    (plugin.views || []).map((view) => [view.ref, view.title, view.surfaces, view.placements?.page]), (plugin.skins || []).map((skin) => skin.id)]));
+  if (key !== pluginCatalogKey) {
+    pluginCatalogKey = key;
+    render();
+    renderViewSwitcher();
+    renderThemePresetChips();
+    if (isSettingsSurfaceVisible()) preserveSettingsPanelScroll(renderViewPreferences);
+  }
+  return list;
+}
+
+pluginApi = pluginBridge ? {
+  list: async () => applyPluginCatalog(await pluginBridge.list()),
+  setEnabled: async (id, enabled) => applyPluginCatalog(await pluginBridge.setEnabled(id, enabled)),
+  setBackground: async (id, enabled) => applyPluginCatalog(await pluginBridge.setBackground(id, enabled)),
+  restart: async (id) => applyPluginCatalog(await pluginBridge.restart(id)),
+  reload: async () => applyPluginCatalog(await pluginBridge.reload()),
+  place: async (ref, surface, placed) => applyPluginCatalog(await pluginBridge.place(ref, surface, placed)),
+  openPage: async ref => {
+    const page = pluginPageOptions().find(page => page.ref === ref);
+    if (!page) throw new Error(t('plugins.page.enableFirst'));
+    openViewFromTray(page.id);
+    document.querySelector('#pluginMainPanel .plugin-main-page:not(.hidden) h2')?.focus({ preventScroll: true });
+  },
+  catalog: () => pluginBridge.catalog(),
+  catalogPreview: (source, id, version) => pluginBridge.catalogPreview(source, id, version),
+  addSource: input => pluginBridge.addSource(input),
+  refreshSource: id => pluginBridge.refreshSource(id),
+  removeSource: id => pluginBridge.removeSource(id),
+  importPackage: kind => pluginBridge.importPackage(kind),
+  install: async token => applyPluginCatalog(await pluginBridge.install(token)),
+  cancelInstall: token => pluginBridge.cancelInstall(token),
+  rollback: async id => applyPluginCatalog(await pluginBridge.rollback(id)),
+  uninstall: async (id, options) => applyPluginCatalog(await pluginBridge.uninstall(id, options)),
+  appearance: () => pluginBridge.appearance(),
+  setAppearance: value => pluginBridge.setAppearance(value),
+  openFolder: () => pluginBridge.openFolder()
+} : null;
+
+pluginSettingsPanel = pluginApi && window.TokenMonitorPluginSettings
+  ? window.TokenMonitorPluginSettings.createPluginSettingsPanel({
+    document,
+    container: document.getElementById('pluginSettingsList'),
+    t,
+    api: pluginApi,
+    setDetailTooltip: limitWindowsView.setDetailTooltip,
+    onError: (error) => {
+      const message = String(error?.message || error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+      const known = { 'page-full': 'settings.plugins.pageFull', 'notch-full': 'settings.plugins.notchFull', 'tray-full': 'settings.plugins.trayFull' }[message];
+      setStatus(known ? t(known) : t('settings.plugins.actionFailed', { error: message }), true);
+    },
+    onApplySkin: (skin) => void applyPluginSkin(skin),
+    onPlaced: () => renderSettingsSummaries()
+  }) : null;
+
+async function refreshPluginCatalog() {
+  if (!pluginApi) return;
+  if (state.settingsSections?.plugins && pluginSettingsPanel && !pluginSettingsPanel.isInteracting()) {
+    await pluginSettingsPanel.refresh();
+    renderSettingsSummaries();
+    return;
+  }
+  try { await pluginApi.list(); } catch (_) {}
+}
+
+// The tray bitmap has no DOM to observe, so its demand is the plugin items in
+// the custom layout whenever that layout is the one being drawn.
+function syncPluginTrayDemand() {
+  if (!pluginViewHost) return;
+  const refs = state.settings?.showTrayIcon !== false && state.settings?.trayContent === 'custom'
+    ? trayLayoutApi.trayLayoutPluginRefs(state.settings?.trayCustomLayout) : [];
+  pluginViewHost.setExplicitDemand('tray', refs);
+}
+
+function pluginTrayViews() {
+  const views = {};
+  for (const ref of trayLayoutApi.trayLayoutPluginRefs(state.settings?.trayCustomLayout)) {
+    views[ref] = pluginViewHost?.state('tray', ref) || null;
+  }
+  return views;
+}
+
+async function applyPluginSkin(skin) {
+  if (skin.appearance) await pluginBridge.setAppearance(skin.appearance);
+  const patch = { themeColors: { ...themePresetsApi.mergeThemeColors({ ...state.settings?.themeColors, ...skin.colors }) } };
+  if (skin.vendorColors && Object.keys(skin.vendorColors).length) patch.vendorColors = { ...state.settings?.vendorColors, ...skin.vendorColors };
+  applyThemeColors(patch.themeColors);
+  if (patch.vendorColors) applyVendorColorOverrides(patch.vendorColors);
+  await saveSettings(patch);
+  buildAppearanceColorControls();
+}
+
+if (pluginBridge) {
+  pluginBridge.onViews((payload) => {
+    pluginViewHost?.update(payload);
+    if (payload?.surface === 'tray') void maybeUpdateBarsIcon();
+  });
+  pluginBridge.onChanged(() => void refreshPluginCatalog());
+}
+
 async function init() {
   // Subscribe before querying: a native appearance/accessibility change can
   // arrive while the initial state round trip is in flight.
@@ -12640,6 +12885,8 @@ async function init() {
   if (!systemUiThemeSeeded) state.systemDarkUi = state.appInfo?.systemDarkUi === true;
   if (els.aboutVersion) els.aboutVersion.textContent = state.appInfo?.version ? `v${state.appInfo.version}` : '—';
   state.settings = await window.tokenMonitor.getSettings();
+  try { await pluginApi?.list(); } catch (_) {}
+  syncPluginTrayDemand();
   syncContentForm?.syncSettings();
   await syncContentForm?.refresh(false);
   applyEffectiveCurrencyRates();
@@ -13249,6 +13496,7 @@ for (const input of els.reduceMotionInputs || []) {
   input.addEventListener('change', async () => {
     if (!input.checked) return;
     state.settings.reduceMotion = applyReduceMotionPreference(input.value);
+    pluginViewHost?.refreshMotion();
     await saveAppearanceFromControls();
   });
 }
@@ -13293,6 +13541,11 @@ els.swapSettingsRefreshInput.addEventListener('change', () => {
   void saveAppearanceFromControls();
 });
 els.discordRpcInput.addEventListener('change', saveAppearanceFromControls);
+els.pluginsEnabledInput?.addEventListener('change', async () => {
+  await saveSettings({ pluginsEnabled: els.pluginsEnabledInput.checked });
+  await pluginSettingsPanel?.refresh();
+  renderSettingsSummaries();
+});
 els.windowBehaviorInput.addEventListener('change', () => saveSettings({ windowBehavior: els.windowBehaviorInput.value }));
 els.keepAboveTaskbarInput?.addEventListener('change', () => saveSettings({ keepAboveTaskbar: els.keepAboveTaskbarInput.checked }));
 els.floatingBubbleInput.addEventListener('change', () => {
@@ -13806,6 +14059,7 @@ window.tokenMonitor.onSettingsPush?.((next) => {
     if (JSON.stringify(next[key]) !== JSON.stringify(state.settings?.[key])) delete appearancePreview[key];
   }
   setRendererSettings(next);
+  syncPluginTrayDemand();
   applyEffectiveCurrencyRates();
   observeDisplayLiveTokenRates(state.stats);
   preserveSettingsPanelScroll(syncSettingsForm);
@@ -13913,6 +14167,7 @@ const allTimeSessions = allTimeSessionsApi.createAllTimeSessionsLoader({
   onError: (error) => console.log(`[stats] all-time sessions failed: ${error?.message || error}`)
 });
 function handleWindowVisibilityChange() {
+  pluginViewHost?.refreshDemand();
   if (els.syncPanelSignal) els.syncPanelSignal.dataset.windowHidden = String(isRendererWindowHidden());
   if (!statsRenderScheduler.visibilityChanged()) return;
   if (isRendererWindowHidden()) cancelTokenRateBoost();
@@ -14500,6 +14755,8 @@ function renderCustomTrayItemCanvas(item, height = 44, colors = {}, options = {}
   const textColor = colors.text || fillColor;
   const h = Math.max(16, Math.round(height));
 
+  if (item.type === 'plugin') return renderPluginTrayItemCanvas(item, h, { trackColor, textColor });
+
   if (item.type === 'spacer') {
     const isDot = item.variant === 'dot';
 
@@ -14678,6 +14935,45 @@ function renderCustomTrayItemCanvas(item, height = 44, colors = {}, options = {}
   return canvas;
 }
 
+// A plugin's tray item: optional icon, optional free drawing and a reading,
+// drawn in the tray's single ink so it matches template rendering.
+function renderPluginTrayItemCanvas(item, h, { trackColor, textColor }) {
+  const view = item.plugin;
+  const tray = view?.status === 'ok' ? view.tray || {} : {};
+  const text = view?.status === 'ok' ? String(tray.text ?? view.compact?.value ?? '') : '--';
+  const iconName = tray.icon || (!tray.draw && view?.status === 'ok' ? view.icon : '') || '';
+  const fontSize = Math.round(h * 0.62);
+  const font = trayTextCanvasFont({ fontStyle: 'normal' }, fontSize, 500);
+  const measure = document.createElement('canvas').getContext('2d');
+  measure.font = font;
+  const iconSize = Math.round(h * 0.7);
+  const gap = Math.max(1, Math.round(h * 0.12));
+  const drawWidth = Array.isArray(tray.draw) ? Math.round((tray.width || 32) * (h / 22)) : 0;
+  const textWidth = text ? Math.ceil(measure.measureText(text).width) : 0;
+  const parts = [iconName ? iconSize : 0, drawWidth, textWidth].filter(Boolean);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, parts.reduce((sum, part) => sum + part, 0) + gap * Math.max(0, parts.length - 1) + 2);
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  let x = 1;
+  if (iconName) {
+    pluginViewsApi.drawIcon(ctx, iconName, { x, y: (h - iconSize) / 2, size: iconSize, color: textColor });
+    x += iconSize + gap;
+  }
+  if (drawWidth) {
+    const ink = { default: textColor, accent: textColor, chart: textColor, ok: textColor, info: textColor, warn: textColor, bad: textColor, muted: trackColor };
+    pluginViewsApi.drawDisplayList(ctx, tray.draw, { x, y: 0, width: drawWidth, height: h, boxWidth: tray.width || 32, boxHeight: 22, colors: ink });
+    x += drawWidth + gap;
+  }
+  if (text) {
+    ctx.font = font;
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = view?.status === 'ok' ? textColor : trackColor;
+    ctx.fillText(text, x, h / 2 + 1);
+  }
+  return canvas;
+}
+
 function renderCustomTrayLayout(stats, layout, height = 44, colors = {}, options = {}) {
   const codexProviders = (stats?.limits?.providers || []).filter((provider) => provider?.provider === 'codex');
   const selectedCodexKey = String(state.codexActiveAccount?.accountKey || '').trim();
@@ -14692,7 +14988,8 @@ function renderCustomTrayLayout(stats, layout, height = 44, colors = {}, options
     activeAccountKeys: activeCodexKey ? { codex: activeCodexKey } : {},
     availableProviderIds: Object.keys(trayProviderImages),
     liveTokenRates: options.liveTokenRates || displayLiveTokenRateSamples(),
-    liveTokenRateFormatter: options.liveTokenRateFormatter || ((value) => formatLiveTokenRate(value))
+    liveTokenRateFormatter: options.liveTokenRateFormatter || ((value) => formatLiveTokenRate(value)),
+    pluginViews: pluginTrayViews()
   });
   const items = resolved.items.map((item) => (
     item.type === 'text'

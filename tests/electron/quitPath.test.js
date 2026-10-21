@@ -56,6 +56,23 @@ test('before-quit hands over without taking the quit away from the OS', () => {
   // a synchronous performQuit gives it nothing to buy.
   assert.doesNotMatch(handler, /preventDefault/);
   // electron-updater owns the restart, so that one route has to opt out.
-  assert.match(handler, /if \(skipForcedQuit\) return;/);
+  assert.match(handler, /if \(skipForcedQuit\) \{ pluginRuntime\?\.dispose\(\); return; \}/);
   assert.match(main, /skipForcedQuit = true;/);
+});
+
+
+test('tray and signal quit flush plugin state before immediate exit', () => {
+  const vm = require('node:vm');
+  const events = [];
+  const context = { console, quitRequested: false, quitInProgress: false,
+    pluginRuntime: { dispose() { events.push('flush'); } },
+    stopPersistBoundsTimer() {}, stopLocalCollector() {}, stopStatsStream() {}, stopHostStats() {},
+    stopSyncCollector() {}, stopIcloudRuntime() {}, terminateUsageHostSubprocesses() {},
+    syncStatsPublication: { cancel() {} }, macWidgetSnapshotController: null, macWidgetDemand: null,
+    stopEmbeddedHub() {}, stopDiscordRpc() {}, sessionUsageArchiveStore: { close() {} }, tray: null,
+    app: { exit() { events.push('exit'); } } };
+  vm.runInNewContext(main.slice(main.indexOf('function stopAll()'), main.indexOf('\nlet quitRequested')) + '\n'
+    + main.slice(main.indexOf('function performQuit()'), main.indexOf('// Write the export file set')), context);
+  context.requestAppQuit();
+  assert.deepEqual(events, ['flush', 'exit']);
 });

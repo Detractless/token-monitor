@@ -239,6 +239,45 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
       return () => ipcRenderer.removeListener('copilot:loginStatus', handler);
     }
   },
+  // Plugin management and the views this window draws (Home, tray bitmap).
+  // Consent and placement run in main; the renderer never sees manifests,
+  // plugin code or file paths beyond the plugins folder location.
+  plugins: {
+    list: () => ipcRenderer.invoke('plugins:list'),
+    setEnabled: (id, enabled) => ipcRenderer.invoke('plugins:setEnabled', { id, enabled }),
+    setBackground: (id, enabled) => ipcRenderer.invoke('plugins:setBackground', { id, enabled }),
+    restart: (id) => ipcRenderer.invoke('plugins:restart', { id }),
+    reload: () => ipcRenderer.invoke('plugins:reload'),
+    openFolder: () => ipcRenderer.invoke('plugins:openFolder'),
+    openPage: ref => ipcRenderer.invoke('plugins:openPage', ref),
+    catalog: () => ipcRenderer.invoke('plugins:catalog'),
+    catalogPreview: (source, id, version) => ipcRenderer.invoke('plugins:catalogPreview', source, id, version),
+    addSource: input => ipcRenderer.invoke('plugins:addSource', input),
+    refreshSource: id => ipcRenderer.invoke('plugins:refreshSource', id),
+    removeSource: id => ipcRenderer.invoke('plugins:removeSource', id),
+    importPackage: kind => ipcRenderer.invoke('plugins:import', kind),
+    install: token => ipcRenderer.invoke('plugins:install', token),
+    cancelInstall: token => ipcRenderer.invoke('plugins:cancelInstall', token),
+    rollback: id => ipcRenderer.invoke('plugins:rollback', id),
+    uninstall: (id, options) => ipcRenderer.invoke('plugins:uninstall', id, options),
+    place: (ref, surface, placed) => ipcRenderer.invoke('plugins:place', { ref, surface, placed }),
+    interact: (surface, ref, input, revision) => ipcRenderer.invoke('plugins:interact', { surface, ref, input, revision }),
+    appearance: () => ipcRenderer.invoke('plugins:appearance'),
+    setAppearance: value => ipcRenderer.invoke('plugins:setAppearance', value),
+    skins: () => ipcRenderer.invoke('plugins:skins'),
+    views: (surface) => ipcRenderer.invoke('plugins:views', { surface }),
+    setDemand: (surface, refs) => ipcRenderer.send('plugins:demand', { surface, refs }),
+    onViews: (callback) => {
+      const listener = (_event, payload) => { try { callback(payload); } catch (_) {} };
+      ipcRenderer.on('plugins:views', listener);
+      return () => ipcRenderer.removeListener('plugins:views', listener);
+    },
+    onChanged: (callback) => {
+      const listener = () => { try { callback(); } catch (_) {} };
+      ipcRenderer.on('plugins:changed', listener);
+      return () => ipcRenderer.removeListener('plugins:changed', listener);
+    }
+  },
   minimize: () => ipcRenderer.send('window:minimize'),
   close: () => ipcRenderer.send('window:close')
 });

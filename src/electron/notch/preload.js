@@ -21,5 +21,9 @@ contextBridge.exposeInMainWorld('tokenMonitorEdgeDock', {
   refreshLimits: () => ipcRenderer.invoke('topNotch:refreshLimits'),
   toggleRateMode: () => ipcRenderer.send('topNotch:toggleRateMode'),
   switchCodexAccount: (accountId) => ipcRenderer.invoke('topNotch:switchCodexAccount', { accountId }),
-  onRender: (callback) => subscribe('topNotch:render', callback)
+  onRender: (callback) => subscribe('topNotch:render', callback),
+  // Plugin pages: which views the open panel shows, and their content.
+  setPluginDemand: (refs) => ipcRenderer.send('topNotch:pluginDemand', { refs }),
+  interact: (ref, input, revision) => ipcRenderer.invoke('plugins:interact', { surface: 'notch', ref, input, revision }),
+  onPluginViews: (callback) => subscribe('plugins:views', callback)
 });

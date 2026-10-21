@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, net, Notification, powerMonitor, screen, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, net, Notification, powerMonitor, protocol, screen, session, shell, systemPreferences } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { defaultDeviceId, generateHubSecret, lanIpv4Addresses, loadDotEnv, pidFilePath, readJson, sharedDataDir } = require('../shared/config');
 const {
@@ -435,6 +435,12 @@ const {
   normalizeEdgeDockSize
 } = require('./edgeDock/geometry');
 const { buildEdgeDockCells } = require('./renderer/edgeDock/presentation');
+const edgeDockPresentationApi = require('./renderer/edgeDock/presentation');
+const { createPluginRuntime, registerPluginScheme } = require('./plugins/runtime');
+const { normalizePluginStates } = require('./plugins/manager');
+const pluginPlacements = require('../shared/plugins/placements');
+// Created after 'ready' by startPluginRuntime(); null in safe paths and tests.
+let pluginRuntime = null;
 const { DERIVED_PERIODS: EDGE_DOCK_DERIVED_PERIODS, normalizeEdgeDockItems } = require('./renderer/edgeDock/items');
 const fixedPeriodRangesApi = require('./renderer/fixedPeriodRanges');
 const { normalizeBackgroundImageOpacity } = require('./renderer/glassRendering');
@@ -660,6 +666,10 @@ function defaultSettings() {
     edgeDockOffset: null,
     edgeDockDisplayId: null,
     edgeDockItems: null,
+    pluginsEnabled: true,
+    pluginStates: {},
+    notchPluginPages: [],
+    pluginMainPages: [],
     lastViewState: { period: 'today', breakdown: 'home' },
     discordRpcEnabled: false,
     deviceId: process.env.TOKEN_MONITOR_DEVICE_ID || defaultDeviceId(),
@@ -2773,6 +2783,10 @@ function readSettings() {
     merged.edgeDockSize = normalizeEdgeDockSize(merged.edgeDockSize);
     merged.edgeDockCustomScale = normalizeEdgeDockCustomScale(merged.edgeDockCustomScale);
     merged.edgeDockItems = normalizeEdgeDockItems(merged.edgeDockItems);
+    merged.pluginsEnabled = parseBoolean(merged.pluginsEnabled, true);
+    merged.pluginStates = normalizePluginStates(merged.pluginStates);
+    merged.pluginMainPages = pluginPlacements.normalizeRefList(merged.pluginMainPages, 32);
+    merged.notchPluginPages = pluginPlacements.normalizeNotchPluginPages(merged.notchPluginPages);
     merged.trayCustomLayout = normalizeTrayLayout(merged.trayCustomLayout);
     merged.showTrayProviderBadge = parseBoolean(merged.showTrayProviderBadge, false);
     merged.windowToggleShortcut = normalizeWindowToggleShortcut(merged.windowToggleShortcut);
@@ -4917,7 +4931,9 @@ function publishLocalSessionActivity(patch) {
         .map(([name, sessions]) => [name, withoutSessionTitles(sessions)])) }
     : displayPatch;
   presentationCache.updateActivity(previous, latestStats, (stats) => applyActivityPatch(stats, visiblePatch));
-  updateEdgeDockCells(electronPresentationStats(latestStats));
+  const activityStats = electronPresentationStats(latestStats);
+  pluginRuntime?.publishStats(activityStats);
+  updateEdgeDockCells(activityStats);
   sendPush({ event: 'session-activity', data: { patch: visiblePatch, snapshot } });
 }
 
@@ -4949,6 +4965,7 @@ function sendPush(payload, options = {}) {
       data: { ...payload.data, stats: rendererSnapshots.stamp(latestStats, rendererStats(visibleStats)) }
     };
     scheduleMacWidgetSnapshot(visibleStats, options.widgetProducerOwner);
+    pluginRuntime?.publishStats(visibleStats);
     updateEdgeDockCells(visibleStats);
     syncCodexPresentationActiveAccount();
     updateTrayDisplay();
@@ -6001,6 +6018,10 @@ const notchHistory = createNotchHistory({
 function pushNotchCells(visibleStats) {
   notchLastCells = edgeDockCellsFor(visibleStats, notchPanelItems(visibleStats, settings), { includeUnavailableAccounts: true });
   const data = notchDataFor(visibleStats, notchLastCells);
+  // Tab names and icons are metadata; opening a page alone requests its data.
+  if (pluginRuntime) data.panel.pluginCatalog = Object.fromEntries(pluginRuntime.manager.list().plugins
+    .flatMap((plugin) => (plugin.views || []).filter((view) => view.surfaces.includes('notch'))
+      .map((view) => [view.ref, { title: view.title, icon: view.icon }])));
   const history = notchHistory.read(visibleStats, { enabled: settings.historyEnabled !== false, generation: hubModeGeneration });
   if (history) data.panel.week = notchWeek(visibleStats, new Date(), history);
   notchController.setData(data);
@@ -6612,6 +6633,7 @@ function reconfigureUsageRuntimeForMode() {
 // stopLocalCollector() / stopSyncCollector() behaviour so the old watcher is
 // really gone before a new one starts on the same paths.
 function stopAll() {
+  pluginRuntime?.dispose();
   stopPersistBoundsTimer();
   stopLocalCollector({ skipCloseWatchers: true });
   stopStatsStream();
@@ -7486,7 +7508,7 @@ function createWindow(boundsOverride, options = {}) {
   // last real window closes, which window-all-closed relies on for quitting.
   win.on('closed', () => {
     if (quitRequested || process.platform === 'darwin') return;
-    if (BrowserWindow.getAllWindows().every((other) => (edgeDockController?.owns(other) || notchController?.owns(other)))) app.quit();
+    if (BrowserWindow.getAllWindows().every((other) => (edgeDockController?.owns(other) || notchController?.owns(other) || pluginRuntime?.owns(other)))) app.quit();
   });
   win.on('show', () => sendMainWindowVisibility(win));
   win.on('hide', () => sendMainWindowVisibility(win));
@@ -7698,6 +7720,10 @@ function rebuildWindow() {
   });
 }
 
+// Plugin hosts load from their own privileged scheme, which Chromium only
+// accepts before 'ready'.
+registerPluginScheme(protocol);
+
 app.whenReady().then(() => {
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(APP_ICON_PATH);
   ensureSettingsLoaded();
@@ -7907,6 +7933,7 @@ app.whenReady().then(() => {
     delete normalizedPatch.syncContentState;
     delete normalizedPatch.syncContentStatus;
     delete normalizedPatch.syncContentBase;
+    delete normalizedPatch.pluginStates;
     // Account fields declared persist:'never' (managed account lists, profile
     // maps, workbuddy session fields) are stripped by the registry walk below.
     normalizeAccountPatch(patch, normalizedPatch);
@@ -7988,6 +8015,12 @@ app.whenReady().then(() => {
       notchSize: normalizeEdgeDockSize(patch.notchSize ?? settings.notchSize),
       notchCustomScale: normalizeEdgeDockCustomScale(patch.notchCustomScale ?? settings.notchCustomScale),
       notchItems: normalizeEdgeDockItems('notchItems' in (patch || {}) ? patch.notchItems : settings.notchItems),
+      notchPluginPages: pluginPlacements.normalizeNotchPluginPages('notchPluginPages' in (patch || {}) ? patch.notchPluginPages : settings.notchPluginPages),
+      pluginMainPages: pluginPlacements.normalizeRefList('pluginMainPages' in (patch || {}) ? patch.pluginMainPages : settings.pluginMainPages, 32),
+      pluginsEnabled: parseBoolean(patch.pluginsEnabled ?? settings.pluginsEnabled, true),
+      // Consent is written only by the plugin manager (plugins:setEnabled),
+      // never by a generic settings patch from a renderer.
+      pluginStates: normalizePluginStates(settings.pluginStates),
       notchRunningIndicatorEnabled: parseBoolean(patch.notchRunningIndicatorEnabled ?? settings.notchRunningIndicatorEnabled, false),
       notchWarnColors: parseBoolean(patch.notchWarnColors ?? settings.notchWarnColors, false),
       notchHoverAction: normalizeNotchHoverAction(patch.notchHoverAction ?? settings.notchHoverAction),
@@ -8250,6 +8283,7 @@ app.whenReady().then(() => {
     if (settings.sessionTitlesEnabled !== previousSettingsState.sessionTitlesEnabled) {
       refreshLimitStatsPresentation();
     }
+    pluginRuntime?.settingsChanged();
     return settingsForRenderer();
   }
   ipcMain.handle('appearance:preview', (event, patch) => {
@@ -9499,7 +9533,7 @@ app.whenReady().then(() => {
     const action = activateWindowAction({
       mainWindow,
       windows: BrowserWindow.getAllWindows(),
-      isDockOwned: (win) => Boolean(edgeDockController?.owns(win) || notchController?.owns(win))
+      isDockOwned: (win) => Boolean(edgeDockController?.owns(win) || notchController?.owns(win) || pluginRuntime?.owns(win))
     });
     if (action === 'focusWindow') focusExistingWindow();
     else if (action === 'createWindow') {
@@ -9511,6 +9545,55 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+  startPluginRuntime();
+  function startPluginRuntime() {
+    try {
+      pluginRuntime = createPluginRuntime({
+        electron: { app, BrowserWindow, Notification, ipcMain, session, shell, dialog },
+        userDataDir: app.getPath('userData'),
+        getSettings: () => settings,
+        applySettingsPatch,
+        persistPluginStates: (states) => {
+          settings = { ...settings, pluginStates: normalizePluginStates(states) };
+          saveSettings({ throwOnError: true });
+          pushSettingsToRenderer();
+        },
+        persistManagementSettings: (patch) => {
+          // Main-owned transaction state only; never exposed as generic renderer settings.
+          const allowed = ['pluginStates', 'homeModuleOrder', 'hiddenHomeModules', 'edgeDockItems', 'trayCustomLayout', 'notchPluginPages', 'pluginMainPages'];
+          settings = { ...settings, ...Object.fromEntries(allowed.filter(key => Object.hasOwn(patch, key)).map(key => [key, patch[key]])) };
+          settings.pluginStates = normalizePluginStates(settings.pluginStates);
+          saveSettings({ throwOnError: true });
+          pushSettingsToRenderer();
+        },
+        getLocale: () => trayMenuLocale(),
+        getContext: () => ({ mode, hubMode: settings.hubMode, hubUrl: settings.hubUrl, deviceId: settings.deviceId }),
+        isMainSender: (event) => Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents),
+        isSurfaceSender: (event, surface) => {
+          const win = BrowserWindow.fromWebContents(event.sender);
+          return Boolean(win && (surface === 'edgeDock' ? edgeDockController?.owns(win) : notchController?.owns(win)));
+        },
+        placementContext: () => {
+          const stats = latestStats ? electronPresentationStats(latestStats) : null;
+          return {
+            defaultEdgeDockProviders: edgeDockPresentationApi.connectedLimitProviders(stats, {
+              limitsEnabled: settings.limitsEnabled !== false,
+              limitProviders: settings.limitProviders,
+              limitProviderOrder: settings.limitProviderOrder
+            }),
+            trayPresetLayout: notchSummaryLayout({ ...settings, notchSummaryMode: 'tray' }, stats)
+          };
+        },
+        tokenRateApi,
+        presentation: edgeDockPresentationApi
+      });
+      pluginRuntime.start();
+      if (latestStats) pluginRuntime.publishStats(electronPresentationStats(latestStats));
+    } catch (error) {
+      pluginRuntime = null;
+      console.warn(`[plugins] runtime failed to start: ${error.message}`);
+    }
+  }
   scheduleStartupAppUpdateCheck();
   startAppUpdateBackgroundChecks();
 });
@@ -9534,7 +9617,7 @@ app.on('before-quit', () => {
   notchController?.dispose();
   clearTimeout(notchRateTimer);
   electronWorkbuddyLocalAuth.dispose();
-  if (skipForcedQuit) return;
+  if (skipForcedQuit) { pluginRuntime?.dispose(); return; }
   performQuit();
 });
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {

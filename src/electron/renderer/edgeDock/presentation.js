@@ -780,6 +780,10 @@
         // item was configured with, and the projection is the only place that
         // knows how to apply them.
         cells.push(statCell(stats, item.metric, { ...options, ...item, groupedSessions }));
+      } else if (item.type === 'plugin') {
+        // Plugin cells carry only their ref; the plugin's live content reaches
+        // the dock on its own channel and is drawn into the cell in place.
+        cells.push({ id: `plugin:${item.ref}`, kind: 'plugin', ref: item.ref });
       } else if (item.type === 'limit' && options.limitsEnabled !== false) {
         // An explicitly chosen provider keeps its slot while it has nothing to
         // report (it renders as `--`), so the user's layout does not reshuffle

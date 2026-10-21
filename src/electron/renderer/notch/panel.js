@@ -1,6 +1,6 @@
 'use strict';
 
-// The open top entry: a fixed-height panel with four pages, built from the
+// The open top entry: a fixed-height panel with built-in and plugin pages, built from the
 // cells the main process projects (limits, today, month, sessions, live rate)
 // and the panel facts it adds (the last seven days). It shares the widget's
 // typography and colours but owns its own layout; no card or list styles from
@@ -14,6 +14,8 @@
   // an attached shell and becomes the first row of a capsule.
   const PANEL_METRICS = Object.freeze({ band: 34, pages: 176, gap: 6, bottom: 18, padding: 24 });
   const PAGES = Object.freeze(['home', 'limits', 'sessions', 'breakdown']);
+  // Plugin pages follow the fixed ones as `plugin:<pluginId>/<viewId>`.
+  const PLUGIN_PAGE_PREFIX = 'plugin:';
   const LIMIT_COLUMNS = 3;
   const BREAKDOWN_ROWS = 4;
 
@@ -34,7 +36,8 @@
 
   function createNotchPanel({ document, window, el, t, state, bridge, shared }) {
     const { markNode, hasMask, providerLabel, limitProviderColor, formatTokens, formatCardTokens, formatBreakdownTokens, usageCostNode: usageCost, formatRate,
-      appearance, prefersReducedMotion, readableColor = color => color, limitAccountTitle, overflowText, limitWindowsView } = shared;
+      appearance, prefersReducedMotion, readableColor = color => color, limitAccountTitle, overflowText, limitWindowsView, pluginHost = null } = shared;
+    const pluginViews = window.TokenMonitorPluginViews;
     const presentation = window.TokenMonitorEdgeDockPresentation;
     const trayText = window.TokenMonitorTrayText;
     const balance = window.TokenMonitorLimitBalanceDisplay;
@@ -60,42 +63,67 @@
     const status = el('div', 'notch-status');
     band.append(tabs, el('div', 'notch-band-gap'), status);
     const pages = el('div', 'notch-pages');
-    const pageNodes = new Map(PAGES.map((page) => [page, el('section', `notch-page notch-page-${page}`)]));
-    for (const [page, pageNode] of pageNodes) {
-      pageNode.dataset.page = page;
-      pageNode.setAttribute('role', 'tabpanel');
-      pageNode.id = `notch-page-${page}`;
-      pageNode.setAttribute('aria-labelledby', `notch-tab-${page}`);
-      pages.append(pageNode);
-    }
-    node.append(band, pages);
+    // The fixed pages first, then any plugin pages the user placed here.
+    let pageOrder = [...PAGES];
+    const pageNodes = new Map();
     const tabButtons = new Map();
     const TAB_ICONS = {
       home: 'home', limits: 'limits', sessions: 'session', breakdown: 'model'
     };
-    for (const page of PAGES) {
-      const button = el('button', 'notch-tab');
+    const domId = (page) => page.replace(/[^a-z0-9-]/g, '-');
+    function addPage(page) {
+      const isPlugin = page.startsWith(PLUGIN_PAGE_PREFIX);
+      const pageNode = el('section', `notch-page notch-page-${isPlugin ? 'plugin' : page}`);
+      pageNode.dataset.page = page;
+      pageNode.setAttribute('role', 'tabpanel');
+      pageNode.id = `notch-page-${domId(page)}`;
+      pageNode.setAttribute('aria-labelledby', `notch-tab-${domId(page)}`);
+      pages.append(pageNode);
+      pageNodes.set(page, pageNode);
+      const button = el('button', `notch-tab${isPlugin ? ' notch-tab-plugin' : ''}`);
       button.type = 'button';
       button.dataset.page = page;
       button.setAttribute('role', 'tab');
-      button.id = `notch-tab-${page}`;
-      button.setAttribute('aria-controls', `notch-page-${page}`);
-      const icon = el('span', `view-switcher-icon view-icon-${TAB_ICONS[page]}`);
+      button.id = `notch-tab-${domId(page)}`;
+      button.setAttribute('aria-controls', pageNode.id);
+      const icon = isPlugin ? el('span', 'notch-tab-plugin-icon') : el('span', `view-switcher-icon view-icon-${TAB_ICONS[page]}`);
       icon.setAttribute('aria-hidden', 'true');
       button.append(icon, el('span', 'notch-tab-badge'));
       activateOnPress(button, () => selectPage(page));
       tabButtons.set(page, button);
       tabs.append(button);
     }
+    for (const page of PAGES) addPage(page);
+    node.append(band, pages);
+    // Placed plugin pages arrive with each push; a page whose plugin went away
+    // is removed, and the panel falls back to Home if it was showing.
+    function syncPluginPages(refs) {
+      const wanted = (Array.isArray(refs) && pluginHost ? refs : []).map((ref) => `${PLUGIN_PAGE_PREFIX}${ref}`);
+      const next = [...PAGES, ...wanted];
+      if (next.join('|') === pageOrder.join('|')) return;
+      for (const page of pageOrder) {
+        if (next.includes(page)) continue;
+        pageNodes.get(page)?.remove();
+        tabButtons.get(page)?.remove();
+        pageNodes.delete(page);
+        tabButtons.delete(page);
+        pageKeys.delete(page);
+      }
+      for (const page of wanted) if (!pageNodes.has(page)) addPage(page);
+      pageOrder = next;
+      for (const page of pageOrder) tabs.append(tabButtons.get(page));
+      if (!pageOrder.includes(view.page)) view.page = 'home';
+    }
     tabs.addEventListener('keydown', (event) => {
-      const current = PAGES.indexOf(view.page);
-      const index = event.key === 'Home' ? 0 : event.key === 'End' ? PAGES.length - 1
-        : event.key === 'ArrowRight' ? (current + 1) % PAGES.length
-          : event.key === 'ArrowLeft' ? (current + PAGES.length - 1) % PAGES.length : -1;
+      const current = pageOrder.indexOf(view.page);
+      const index = event.key === 'Home' ? 0 : event.key === 'End' ? pageOrder.length - 1
+        : event.key === 'ArrowRight' ? (current + 1) % pageOrder.length
+          : event.key === 'ArrowLeft' ? (current + pageOrder.length - 1) % pageOrder.length : -1;
       if (index < 0) return;
       event.preventDefault();
-      selectPage(PAGES[index]);
-      tabButtons.get(PAGES[index]).focus({ preventScroll: true });
+      const page = pageOrder[index];
+      selectPage(page);
+      tabButtons.get(page).focus({ preventScroll: true });
     });
 
     let payload = null;
@@ -117,15 +145,15 @@
     // previous node's glyphs are captured before the page is replaced.
     function captureRolls(pageNode) {
       const snapshot = new Map();
-      for (const node of pageNode.querySelectorAll('[data-roll-key]')) {
-        snapshot.set(node.dataset.rollKey, { text: node.dataset.rollText, value: Number(node.dataset.rollValue), glyphs: numberAnimation.capture(node) });
+      for (const node of pageNode.querySelectorAll('[data-roll-key]:not([data-pv-roll])')) {
+        snapshot.set(node.dataset.rollKey, { text: node.dataset.rollText, value: numberAnimation.currentCountValue?.(node) ?? Number(node.dataset.rollValue), glyphs: numberAnimation.capture(node) });
       }
       settleRolls();
       return snapshot;
     }
     function playRolls(pageNode, snapshot) {
       if (prefersReducedMotion()) return;
-      for (const node of pageNode.querySelectorAll('[data-roll-key]')) {
+      for (const node of pageNode.querySelectorAll('[data-roll-key]:not([data-pv-roll])')) {
         const previous = snapshot.get(node.dataset.rollKey);
         const next = node.textContent;
         if (!previous || previous.text === next || !/[0-9]/.test(previous.text) || !/[0-9]/.test(next)) continue;
@@ -134,15 +162,7 @@
         if (numberAnimation.normalize(appearance().tokenNumberAnimation) === 'roll') {
           settle = numberAnimation.beginRoll(node, previous.text, next, !(value < previous.value), null, previous.glyphs);
         } else {
-          const started = performance.now();
-          let frame;
-          const step = (now) => {
-            const progress = Math.min(1, (now - started) / numberAnimation.duration);
-            node.textContent = rollFormats.get(node)(previous.value + (value - previous.value) * (1 - (1 - progress) ** 4));
-            if (progress < 1) frame = requestAnimationFrame(step);
-          };
-          frame = requestAnimationFrame(step);
-          settle = () => { cancelAnimationFrame(frame); node.textContent = next; };
+          settle = numberAnimation.beginCount(node, previous.value, value, rollFormats.get(node), { toText: next });
         }
         const timer = setTimeout(() => { settle(); rolls.delete(node); }, numberAnimation.duration);
         rolls.set(node, { settle, timer });
@@ -212,17 +232,27 @@
 
     // ---- Band -----------------------------------------------------------------
 
+    // A plugin page is mounted only while selected, so the plugin samples
+    // nothing for a page the user is not looking at.
+    function releasePluginPage(page) {
+      if (!page?.startsWith(PLUGIN_PAGE_PREFIX)) return;
+      pageNodes.get(page)?.replaceChildren();
+      pageKeys.delete(page);
+      pluginHost?.refreshDemand();
+    }
+
     function selectPage(page) {
-      if (!PAGES.includes(page) || view.page === page) return;
-      const previous = PAGES.indexOf(view.page);
+      if (!pageOrder.includes(page) || view.page === page) return;
+      const previous = pageOrder.indexOf(view.page);
       settleRolls();
       stopTitleReading();
       view.scrub = null;
+      releasePluginPage(view.page);
       view.page = page;
       for (const [name, pageNode] of pageNodes) {
-        pageNode.classList.toggle('is-before', PAGES.indexOf(name) < PAGES.indexOf(page));
+        pageNode.classList.toggle('is-before', pageOrder.indexOf(name) < pageOrder.indexOf(page));
       }
-      pages.dataset.direction = PAGES.indexOf(page) > previous ? 'forward' : 'back';
+      pages.dataset.direction = pageOrder.indexOf(page) > previous ? 'forward' : 'back';
       paintTabs();
       renderPage(page);
     }
@@ -234,10 +264,21 @@
         button.classList.toggle('is-selected', selected);
         button.setAttribute('aria-selected', String(selected));
         button.tabIndex = selected ? 0 : -1;
-        button.title = t(`notch.tab.${page}`);
+        if (page.startsWith(PLUGIN_PAGE_PREFIX)) {
+          const pluginState = pluginHost?.state('notch', page.slice(PLUGIN_PAGE_PREFIX.length));
+          button.title = pluginState?.title || payload?.panel?.pluginCatalog?.[page.slice(PLUGIN_PAGE_PREFIX.length)]?.title || t('notch.tab.plugin');
+          const icon = button.querySelector('.notch-tab-plugin-icon');
+          const iconName = pluginState?.icon || payload?.panel?.pluginCatalog?.[page.slice(PLUGIN_PAGE_PREFIX.length)]?.icon || 'dot';
+          if (icon && icon.dataset.icon !== iconName && pluginViews) {
+            icon.dataset.icon = iconName;
+            icon.replaceChildren(pluginViews.iconNode(document, iconName, null, 15));
+          }
+        } else {
+          button.title = t(`notch.tab.${page}`);
+        }
         button.setAttribute('aria-label', button.title);
       }
-      tabPill.style.transform = `translateX(${PAGES.indexOf(view.page) * 36}px)`;
+      tabPill.style.transform = `translateX(${pageOrder.indexOf(view.page) * 36}px)`;
       for (const [page, pageNode] of pageNodes) {
         pageNode.classList.toggle('is-selected', page === view.page);
         pageNode.inert = page !== view.page;
@@ -980,6 +1021,8 @@
       if (page === 'home') return JSON.stringify([...base, cell('stat:today'), cell('stat:sessions')?.sessions, payload?.panel?.week,
         status, providerCells().map((entry) => [entry.id, entry.remainingPercent, entry.headlineAccount, entry.accounts?.map((account) => account.record)])]);
       if (page === 'limits') return JSON.stringify([...base, providerCells().map((entry) => [entry.id, entry.status, entry.accounts?.map((account) => [account.record, account.active])])]);
+      // Plugin content repaints itself in place; the page only needs mounting.
+      if (page.startsWith(PLUGIN_PAGE_PREFIX)) return JSON.stringify([state.appearanceKey, state.locale, page]);
       if (page === 'sessions') return JSON.stringify([...base, cell('stat:sessions')?.sessions, status]);
       return JSON.stringify([...base, view.breakdownPeriod, cell(`stat:${view.breakdownPeriod}`)]);
     }
@@ -1002,7 +1045,8 @@
       const snapshot = page === view.page ? captureRolls(pageNode) : new Map();
       const previous = el('div');
       previous.append(...pageNode.children);
-      if (page === 'home') renderHome(pageNode, nowMs);
+      if (page.startsWith(PLUGIN_PAGE_PREFIX)) renderPluginPage(pageNode, page.slice(PLUGIN_PAGE_PREFIX.length));
+      else if (page === 'home') renderHome(pageNode, nowMs);
       else if (page === 'limits') renderLimits(pageNode, nowMs);
       else if (page === 'sessions') renderSessions(pageNode, nowMs, sessionScroll);
       else renderBreakdown(pageNode, nowMs);
@@ -1012,8 +1056,29 @@
       if (focused) [...pageNode.querySelectorAll('[data-focus-key]')].find((node) => node.dataset.focusKey === focused)?.focus({ preventScroll: true });
     }
 
+    function renderPluginPage(pageNode, ref) {
+      const pluginState = pluginHost?.state('notch', ref);
+      const head = el('div', 'notch-kicker-row');
+      head.append(el('span', 'notch-kicker', pluginState?.title || t('notch.tab.plugin')));
+      if (pluginState?.pluginName && pluginState.pluginName !== pluginState.title) head.append(el('span', 'notch-plugin-owner', pluginState.pluginName));
+      const mount = el('div', 'notch-plugin-body');
+      pageNode.replaceChildren(head, mount);
+      pluginHost?.mount(mount, ref, 'notch');
+    }
+
+    // Plugin pushes refresh tab titles and icons that arrived after mount.
+    function pluginViewsChanged() {
+      paintTabs();
+      if (view.page.startsWith(PLUGIN_PAGE_PREFIX)) {
+        const kicker = pageNodes.get(view.page)?.querySelector('.notch-kicker');
+        const pluginState = pluginHost?.state('notch', view.page.slice(PLUGIN_PAGE_PREFIX.length));
+        if (kicker && pluginState?.title) kicker.textContent = pluginState.title;
+      }
+    }
+
     function render(next, { opening = false } = {}) {
       payload = next;
+      syncPluginPages(next?.panel?.pluginPages);
       node.classList.toggle('is-reduced-motion', prefersReducedMotion());
       if (opening) {
         view.scrub = null; pageKeys = new Map();
@@ -1040,6 +1105,7 @@
       for (const title of node.querySelectorAll('.fade-overflow')) overflowText.stop(title);
     }
     function suspend() {
+      releasePluginPage(view.page);
       settleRolls();
       stopTitleReading();
       clearTimeout(enteringTimer);
@@ -1052,7 +1118,7 @@
     fuelObserver?.observe(pageNodes.get('limits'));
     window.addEventListener('pagehide', () => { suspend(); fuelObserver?.disconnect(); }, { once: true });
     paintTabs();
-    return { node, render, place, selectPage, suspend, contentHeight: panelContentHeight, view };
+    return { node, render, place, selectPage, suspend, pluginViewsChanged, contentHeight: panelContentHeight, view };
   }
 
   return { PANEL_METRICS, PAGES, breakdownRows, createNotchPanel, panelContentHeight };

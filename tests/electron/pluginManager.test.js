@@ -1,0 +1,500 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const test = require('node:test');
+
+const { createDataBus } = require('../../src/shared/plugins/dataBus');
+const { createPluginManager } = require('../../src/electron/plugins/manager');
+
+function fakeClock() {
+  let now = 1_000_000;
+  let nextId = 1;
+  const timers = new Map();
+  return {
+    now: () => now,
+    setTimer(fn, ms) { const id = nextId++; timers.set(id, { at: now + ms, fn }); return id; },
+    clearTimer(id) { timers.delete(id); },
+    async advance(ms) {
+      const target = now + ms;
+      for (;;) {
+        const due = [...timers.entries()].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        timers.delete(due[0]);
+        now = due[1].at;
+        await due[1].fn();
+      }
+      now = target;
+    }
+  };
+}
+
+function writePlugin(root, manifest, code) {
+  const dir = path.join(root, manifest.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest));
+  if (code !== undefined) fs.writeFileSync(path.join(dir, 'main.js'), code);
+}
+
+const SYSTEM = {
+  id: 'sys-view', version: '1.0.0', tmApi: '^1', name: 'Sys',
+  permissions: ['sys.cpu', 'notify'],
+  views: [{ id: 'cpu', title: 'CPU', surfaces: ['home', 'edgeDock', 'tray'], compact: { value: { $: 'sys.cpu', fmt: 'percent' } }, layout: { type: 'stat', value: { $: 'sys.cpu', fmt: 'percent' } } }],
+  alerts: [{ id: 'hot', title: 'Hot', message: 'CPU {value}', source: { $: 'sys.cpu', fmt: 'percent' }, op: '>=', value: 90, forSeconds: 10 }]
+};
+const CODE = {
+  id: 'pulse', version: '1.0.0', tmApi: '^1', name: 'Pulse', main: 'main.js',
+  permissions: ['tm.usage', 'network'], network: { hosts: ['api.example.com'] },
+  background: { intervalSeconds: 30 },
+  metrics: [{ id: 'tpm', kind: 'number' }, { id: 'chart', kind: 'draw' }],
+  views: [{ id: 'pulse', title: 'Pulse', surfaces: ['home', 'notch'], layout: { type: 'stat', value: { $: '@tpm', fmt: 'compact' } } }]
+};
+
+function setup({ plugins = [SYSTEM, CODE], states = {}, netFetch } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-plugins-'));
+  const builtinDir = path.join(root, 'builtin');
+  const userDir = path.join(root, 'user');
+  fs.mkdirSync(builtinDir);
+  fs.mkdirSync(userDir);
+  for (const manifest of plugins) writePlugin(userDir, manifest, manifest.main ? 'tm.onTick(() => {});' : undefined);
+  const clock = fakeClock();
+  const bus = createDataBus({ now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, defer: (fn) => fn() });
+  let samples = 0;
+  bus.defineSource('sys.cpu', { sample: () => { samples += 1; return 42; } });
+  let settings = { pluginStates: states };
+  const notifications = [];
+  const sent = [];
+  const events = [];
+  const running = new Set();
+  const fetches = [];
+  let manager = null;
+  const sandbox = {
+    start(id) { running.add(id); events.push(['start', id]); },
+    stop(id) { if (running.delete(id)) events.push(['stop', id]); },
+    kill(id, reason) { if (!running.delete(id)) return; events.push(['kill', id, reason]); manager.handleExit(id, reason); },
+    send(id, message) { if (!running.has(id)) return false; sent.push([id, message]); return true; },
+    metrics: () => ({}),
+    running: () => [...running],
+    isRunning: (id) => running.has(id),
+    stopAll() { running.clear(); }
+  };
+  manager = createPluginManager({
+    builtinDir,
+    userDir,
+    dataDir: path.join(root, 'data'),
+    bus,
+    sandbox,
+    notify: (note) => notifications.push(note),
+    netFetch: netFetch || (async (url, init) => {
+      fetches.push([url, init]);
+      return { status: 200, ok: true, headers: new Map([['content-type', 'application/json']]), text: async () => '{"ok":true}' };
+    }),
+    getSettings: () => settings,
+    saveStates: (next) => { settings = { ...settings, pluginStates: next }; },
+    now: clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer
+  });
+  manager.reload();
+  return {
+    manager, bus, clock, sent, events, notifications, fetches, running,
+    samples: () => samples,
+    settings: () => settings,
+    setSettings: (patch) => { settings = { ...settings, ...patch }; },
+    root, userDir,
+    plugin: (id) => manager.list().plugins.find((entry) => entry.id === id)
+  };
+}
+
+test('plugins start disabled and enabling records exactly the requested grant', () => {
+  const env = setup();
+  assert.equal(env.plugin('sys-view').status, 'disabled');
+  env.manager.setEnabled('sys-view', true);
+  assert.equal(env.plugin('sys-view').status, 'active');
+  assert.deepEqual(env.settings().pluginStates['sys-view'].grant, { permissions: ['notify', 'sys.cpu'], hosts: [] });
+});
+
+test('an update that widens access pauses the plugin until it is approved again', () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  writePlugin(env.userDir, { ...CODE, version: '1.1.0', permissions: [...CODE.permissions, 'sys.cpu'], network: { hosts: ['api.example.com', 'collector.example.net'] } }, 'tm.onTick(() => {});');
+  env.manager.reload();
+  const plugin = env.plugin('pulse');
+  assert.equal(plugin.status, 'needsApproval');
+  assert.deepEqual(plugin.missing, { permissions: ['sys.cpu'], hosts: ['collector.example.net'] });
+  env.manager.setSurfaceDemand('home', ['pulse/pulse']);
+  assert.equal(env.running.has('pulse'), false, 'an unapproved plugin never runs');
+  assert.equal(env.manager.payload('home').views['pulse/pulse'].status, 'needsApproval');
+});
+
+test('views sample only while shown; hiding the surface stops the source', async () => {
+  const env = setup();
+  env.manager.setEnabled('sys-view', true);
+  env.manager.setBackground('sys-view', false);
+  await env.clock.advance(60_000);
+  assert.equal(env.samples(), 0, 'enabled but not placed or shown: nothing samples');
+  env.manager.setSurfaceDemand('home', ['sys-view/cpu']);
+  await env.clock.advance(10_000);
+  const shown = env.samples();
+  assert.ok(shown >= 5);
+  env.manager.setSurfaceDemand('home', []);
+  await env.clock.advance(60_000);
+  assert.equal(env.samples(), shown);
+  const payload = env.manager.payload('home');
+  assert.deepEqual(payload.views, {});
+});
+
+test('background alerts keep their own slow cadence with no surface and notify once', async () => {
+  const env = setup();
+  env.manager.setEnabled('sys-view', true);
+  assert.deepEqual(env.bus.demandFor('alert:sys-view:hot'), { sources: ['sys.cpu'], lifecycle: 'background', intervalMs: 15_000 });
+  await env.clock.advance(60_000);
+  assert.ok(env.samples() >= 4 && env.samples() <= 5, `background cadence, got ${env.samples()}`);
+  for (const at of [0, 6_000, 12_000]) {
+    await env.clock.advance(at ? 6_000 : 0);
+    env.bus.publish('sys.cpu', 95);
+  }
+  assert.equal(env.notifications.length, 1);
+  assert.match(env.notifications[0].title, /^Sys · Hot$/);
+  assert.equal(env.notifications[0].body, 'CPU 95%');
+  env.manager.setBackground('sys-view', false);
+  assert.equal(env.bus.demandFor('alert:sys-view:hot'), null);
+});
+
+test('a code plugin runs only on demand, ticks by lifecycle and is released when idle', async () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  // Background is declared, so it runs slowly even with nothing on screen.
+  assert.equal(env.running.has('pulse'), true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  const ticks = () => env.sent.filter(([, message]) => message.type === 'tick');
+  assert.equal(ticks().at(-1)[1].mode, 'background');
+  env.manager.setSurfaceDemand('notch', ['pulse/pulse']);
+  assert.equal(env.sent.filter(([, message]) => message.type === 'mode').at(-1)[1].mode, 'visible');
+  env.manager.handleMessage('pulse', { type: 'tick-done', seq: ticks().at(-1)[1].seq });
+  const before = ticks().length;
+  await env.clock.advance(2_000);
+  assert.equal(ticks().length, before + 1, 'visible ticks follow the visible interval');
+  // A slow tick is not stacked.
+  await env.clock.advance(10_000);
+  assert.equal(ticks().length, before + 1);
+  env.manager.handleMessage('pulse', { type: 'tick-done', seq: ticks().at(-1)[1].seq });
+  env.manager.setBackground('pulse', false);
+  env.manager.setSurfaceDemand('notch', []);
+  assert.equal(env.running.has('pulse'), true, 'kept briefly so toggling a view does not respawn');
+  await env.clock.advance(31_000);
+  assert.equal(env.running.has('pulse'), false, 'released after the idle grace');
+});
+
+test('crashes restart with backoff and open the circuit after repeated failures', async () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  const starts = () => env.events.filter(([kind]) => kind === 'start').length;
+  assert.equal(starts(), 1);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.running.delete('pulse');
+  env.manager.handleExit('pulse', 'crashed:oom');
+  assert.equal(env.plugin('pulse').runtime.state, 'backoff');
+  await env.clock.advance(999);
+  assert.equal(starts(), 1);
+  await env.clock.advance(2);
+  assert.equal(starts(), 2, 'first restart after one second');
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    env.running.delete('pulse');
+    env.manager.handleExit('pulse', 'hung');
+    await env.clock.advance(31_000);
+  }
+  assert.equal(env.plugin('pulse').status, 'crashed');
+  assert.equal(env.running.has('pulse'), false);
+  env.manager.setEnabled('pulse', true);
+  assert.equal(env.plugin('pulse').status, 'active', 're-enabling closes the circuit');
+  assert.equal(env.running.has('pulse'), true);
+});
+
+test('messages are validated by sender: undeclared metrics, unpermitted reads and floods', () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'publish', metric: 'tpm', value: 1200 });
+  assert.equal(env.bus.read('plugin.pulse.tpm').value, 1200);
+  env.manager.handleMessage('pulse', { type: 'publish', metric: 'secret', value: 1 });
+  env.manager.handleMessage('pulse', { type: 'publish', metric: 'tpm', value: 'nope' });
+  assert.equal(env.bus.read('plugin.pulse.secret'), null);
+  assert.equal(env.bus.read('plugin.pulse.tpm').value, 1200);
+  env.manager.handleMessage('pulse', { type: 'publish', metric: 'chart', value: [{ op: 'rect', x: 0, y: 0, w: 1, h: 1, fill: 'url(https://evil.test)' }] });
+  assert.equal(env.bus.read('plugin.pulse.chart').value[0].fill, undefined);
+  // A plugin cannot read sources its grant does not cover, even with a forged id.
+  env.manager.handleMessage('pulse', { type: 'subscribe', source: 'sys.cpu' });
+  env.manager.handleMessage('pulse', { type: 'subscribe', source: 'credentials' });
+  env.manager.handleMessage('pulse', { type: 'subscribe', source: 'tm.today' });
+  assert.equal(env.bus.demandFor('worker:pulse:sys.cpu'), null);
+  assert.ok(env.bus.demandFor('worker:pulse:tm.today'));
+  const logs = env.plugin('pulse').logs.map((entry) => entry.text).join('\n');
+  assert.match(logs, /undeclared metric "secret"/);
+  assert.match(logs, /subscribe sys\.cpu denied/);
+  // A flood is dropped, then the process is killed.
+  for (let index = 0; index < 700; index += 1) env.manager.handleMessage('pulse', { type: 'log', text: 'spam' });
+  assert.ok(env.events.some(([kind, , reason]) => kind === 'kill' && reason === 'flooding'));
+});
+
+test('network requests reach only granted hosts over https', async () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  const results = () => env.sent.filter(([, message]) => message.type === 'result').map(([, message]) => message);
+  env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'net.fetch', args: { url: 'https://evil.test/collect?d=1' } });
+  env.manager.handleMessage('pulse', { type: 'call', id: 2, op: 'net.fetch', args: { url: 'http://api.example.com/v1' } });
+  env.manager.handleMessage('pulse', { type: 'call', id: 3, op: 'net.fetch', args: { url: 'https://api.example.com/v1', init: { headers: { Cookie: 'x', Authorization: 'Bearer y' } } } });
+  await new Promise((resolve) => setImmediate(resolve));
+  const [evil, insecure, ok] = results().sort((a, b) => a.id - b.id);
+  assert.equal(evil.ok, false);
+  assert.match(evil.error, /not in network\.hosts/);
+  assert.equal(insecure.ok, false);
+  assert.equal(ok.ok, true);
+  assert.equal(ok.value.text, '{"ok":true}');
+  assert.equal(env.fetches.length, 1);
+  assert.deepEqual(env.fetches[0][1].headers, { authorization: 'Bearer y' });
+  assert.equal(env.fetches[0][1].redirect, 'manual');
+});
+
+test('storage persists per plugin within its quota; notify needs the permission', async () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'storage.set', args: { key: 'threshold', value: { tpm: 5 } } });
+  env.manager.handleMessage('pulse', { type: 'call', id: 2, op: 'storage.get', args: { key: 'threshold' } });
+  env.manager.handleMessage('pulse', { type: 'call', id: 3, op: 'storage.set', args: { key: 'big', value: 'x'.repeat(300 * 1024) } });
+  env.manager.handleMessage('pulse', { type: 'call', id: 4, op: 'notify', args: { title: 'hi' } });
+  env.manager.handleMessage('pulse', { type: 'call', id: 5, op: 'fs.read', args: { path: '/etc/passwd' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  const byId = Object.fromEntries(env.sent.filter(([, message]) => message.type === 'result').map(([, message]) => [message.id, message]));
+  assert.deepEqual(byId[2].value, { tpm: 5 });
+  assert.match(byId[3].error, /quota/);
+  assert.match(byId[4].error, /notify permission/);
+  assert.match(byId[5].error, /unknown operation/);
+  assert.equal(env.notifications.length, 0);
+});
+
+test('view payloads resolve per surface and keep placements of missing plugins visible as such', () => {
+  const env = setup();
+  env.manager.setEnabled('sys-view', true);
+  env.bus.publish('sys.cpu', 37);
+  env.manager.setSurfaceDemand('edgeDock', ['sys-view/cpu', 'gone/view']);
+  env.manager.setSurfaceDemand('tray', ['sys-view/cpu']);
+  const dock = env.manager.payload('edgeDock').views;
+  assert.equal(dock['sys-view/cpu'].status, 'ok');
+  assert.equal(dock['sys-view/cpu'].compact.value, '37%');
+  assert.equal(dock['sys-view/cpu'].tree.value, '37%');
+  assert.equal(dock['gone/view'].status, 'missing');
+  assert.equal(env.manager.payload('tray').views['sys-view/cpu'].compact.value, '37%');
+  env.setSettings({ pluginsEnabled: false });
+  env.manager.settingsChanged();
+  assert.equal(env.manager.payload('edgeDock').views['sys-view/cpu'].status, 'pluginsOff');
+});
+
+test('invalid and duplicate plugins are listed with their problems instead of loading', () => {
+  const env = setup({ plugins: [SYSTEM, { ...SYSTEM, id: 'broken', tmApi: '^9' }] });
+  writePlugin(path.join(env.root, 'builtin'), { ...SYSTEM, name: 'Shadow' });
+  env.manager.reload();
+  const broken = env.plugin('broken');
+  assert.equal(broken.status, 'invalid');
+  assert.match(broken.errors.join('\n'), /tmApi/);
+  const system = env.manager.list().plugins.filter((plugin) => plugin.id === 'sys-view');
+  assert.equal(system.length, 1, 'the first plugin with an id wins');
+  assert.equal(system[0].source, 'builtin');
+  assert.match(system[0].errors.join('\n'), /second plugin with id/);
+});
+
+test('master disable revokes code immediately and blocks late broker calls', async () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'subscribe', source: 'tm.today' });
+  env.setSettings({ pluginsEnabled: false });
+  env.manager.settingsChanged();
+  assert.equal(env.running.has('pulse'), false);
+  env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'net.fetch', args: { url: 'https://api.example.com/v1' } });
+  env.bus.publish('tm.today', { tokens: 42 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(env.fetches.length, 0);
+  assert.equal(env.sent.filter(([, m]) => m.type === 'data' && m.value?.tokens === 42).length, 0);
+  env.manager.dispose();
+});
+
+test('idle grace retains only the process, without data delivery or broker activity', async () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'subscribe', source: 'tm.today' });
+  env.manager.setBackground('pulse', false);
+  assert.equal(env.running.has('pulse'), true);
+  assert.equal(env.sent.filter(([, m]) => m.type === 'mode').at(-1)[1].mode, 'idle');
+  env.bus.publish('tm.today', { tokens: 57 });
+  env.manager.handleMessage('pulse', { type: 'call', id: 5, op: 'net.fetch', args: { url: 'https://api.example.com/v1' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(env.sent.filter(([, m]) => m.type === 'data' && m.value?.tokens === 57).length, 0);
+  assert.equal(env.fetches.length, 0);
+  env.manager.setSurfaceDemand('home', ['pulse/pulse']);
+  assert.equal(env.sent.filter(([, m]) => m.type === 'data').at(-1)[1].value.tokens, 57);
+  env.manager.dispose();
+});
+
+test('reload persists pending storage before replacing its owner', async () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'storage.set', args: { key: 'threshold', value: 123 } });
+  env.manager.reload();
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'call', id: 2, op: 'storage.get', args: { key: 'threshold' } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(env.sent.find(([, m]) => m.type === 'result' && m.id === 2)[1].value, 123);
+  env.manager.dispose();
+});
+
+test('a reduced manifest cannot use permissions or hosts from an older grant', async () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  writePlugin(env.userDir, { ...CODE, permissions: [], network: { hosts: [] } }, 'tm.onTick(() => {});');
+  env.manager.reload();
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'subscribe', source: 'tm.today' });
+  assert.equal(env.bus.demandFor('worker:pulse:tm.today'), null);
+  env.manager.dispose();
+});
+
+test('restart aborts outstanding requests and never replies into the replacement worker', async () => {
+  let finish;
+  let requestSignal;
+  const env = setup({ netFetch: (_url, init) => {
+    requestSignal = init.signal;
+    return new Promise(resolve => { finish = resolve; });
+  } });
+  env.manager.setEnabled('pulse', true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'net.fetch', args: { url: 'https://api.example.com/v1' } });
+  env.manager.restart('pulse');
+  assert.equal(requestSignal.aborted, true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  finish({ status: 200, ok: true, headers: new Map(), text: async () => 'old response' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(env.sent.some(([, m]) => m.type === 'result' && m.id === 1), false);
+  env.manager.dispose();
+});
+
+
+test('malformed structured-clone messages cannot escape into main or publish binary', () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  for (const message of [
+    { type: 'subscribe', source: { toString: 0 } },
+    { type: 'publish', metric: { toString: 0 }, value: 1 },
+    { type: 'publish', metric: 'chart', value: [{ op: { toString: 0 } }] },
+    { type: 'log', text: { toString: 0 } },
+    { type: 'log', text: 'binary', extra: new ArrayBuffer(8 * 1024 * 1024) },
+    { type: 'call', id: { toString: 0 }, op: 'storage.get', args: {} }
+  ]) assert.doesNotThrow(() => env.manager.handleMessage('pulse', message));
+  assert.equal(env.bus.read('plugin.pulse.chart'), null);
+  assert.ok(env.plugin('pulse').logs.some(entry => entry.text.includes('invalid plugin message')));
+  env.manager.dispose(); env.bus.dispose();
+});
+
+test('reload refuses to discard a dirty store when flushing fails, then recovers', () => {
+  const env = setup();
+  env.manager.setEnabled('pulse', true);
+  env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'storage.set', args: { key: 'threshold', value: 123 } });
+  const data = path.join(env.root, 'data');
+  fs.writeFileSync(data, 'blocks the directory');
+  assert.throws(() => env.manager.reload());
+  env.manager.handleMessage('pulse', { type: 'call', id: 2, op: 'storage.get', args: { key: 'threshold' } });
+  assert.equal(env.sent.find(([, message]) => message.type === 'result' && message.id === 2)[1].value, 123);
+  fs.unlinkSync(data);
+  env.manager.reload();
+  env.manager.handleMessage('pulse', { type: 'call', id: 3, op: 'storage.get', args: { key: 'threshold' } });
+  assert.equal(env.sent.find(([, message]) => message.type === 'result' && message.id === 3)[1].value, 123);
+  env.manager.dispose(); env.bus.dispose();
+});
+
+test('metric alerts start their code producer without a separately declared background tick', () => {
+  const manifest = { ...CODE, permissions: ['notify'], network: undefined, background: undefined,
+    alerts: [{ id: 'high', title: 'High', message: 'High', source: { $: '@tpm' }, op: '>', value: 90 }] };
+  const env = setup({ plugins: [manifest] });
+  env.manager.setEnabled('pulse', true);
+  assert.equal(env.running.has('pulse'), true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'publish', metric: 'tpm', value: 100 });
+  assert.equal(env.notifications.length, 1);
+  assert.equal(env.plugin('pulse').runtime.mode, 'background');
+  env.manager.setBackground('pulse', false);
+  assert.equal(env.plugin('pulse').runtime.mode, null);
+  env.manager.dispose(); env.bus.dispose();
+});
+
+test('expanded display-list references are stopped by a whole-view budget', () => {
+  const manifest = { ...CODE, views: [{ id: 'pulse', title: 'Pulse', surfaces: ['home'],
+    layout: { type: 'stack', children: Array.from({ length: 199 }, () => ({ type: 'draw', width: 400, height: 100, list: { $: '@chart' } })) } }] };
+  const env = setup({ plugins: [manifest] });
+  env.manager.setEnabled('pulse', true);
+  env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.handleMessage('pulse', { type: 'publish', metric: 'chart', value: Array.from({ length: 400 }, () => ({ op: 'rect', x: 0, y: 0, w: 1, h: 1 })) });
+  env.manager.setSurfaceDemand('home', ['pulse/pulse']);
+  assert.equal(env.manager.payload('home').views['pulse/pulse'].status, 'error');
+  assert.ok(env.plugin('pulse').logs.some(entry => /render budget/.test(entry.text)));
+  env.manager.dispose(); env.bus.dispose();
+});
+
+test('discovery rechecks host compatibility before starting an enabled producer', t => {
+  const host = require('../../package.json'), original = host.version;
+  const env = setup({ plugins: [{ ...CODE, engines: { tokenMonitor: original } }] });
+  t.after(() => { host.version = original; env.manager.dispose(); env.bus.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); });
+  env.manager.setEnabled('pulse', true);
+  assert.equal(env.plugin('pulse').status, 'active');
+  host.version = '999.0.0'; env.manager.reload();
+  assert.equal(env.plugin('pulse').status, 'invalid');
+  assert.equal(env.running.size, 0);
+  assert.match(env.plugin('pulse').errors.join(' '), /incompatible/);
+});
+
+test('interactions are bound to an active declared control and a current runtime revision', t => {
+  const interactive = { ...CODE, views: [{ id: 'editor', title: 'Editor', surfaces: ['home', 'page'], layout: { type: 'button', action: 'clear', label: 'Clear' } }] };
+  const env = setup({ plugins: [interactive] }); t.after(() => { env.manager.dispose(); env.bus.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); });
+  env.manager.setEnabled('pulse', true); env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.setSurfaceDemand('page', ['pulse/editor']);
+  const revision = () => env.manager.payload('page').views['pulse/editor'].revision;
+  const event = { action: 'clear', type: 'press' }, oldRevision = revision();
+  assert.equal(env.manager.interact('page', 'pulse/editor', event, oldRevision), true);
+  const sent = env.sent.at(-1); assert.equal(sent[0], 'pulse'); assert.equal(sent[1].type, 'interaction');
+  assert.deepEqual(sent[1].event, event);
+  assert.throws(() => env.manager.interact('home', 'pulse/editor', event, oldRevision), /not active/);
+  assert.throws(() => env.manager.interact('page', 'pulse/editor', { ...event, action: 'unknown' }, oldRevision), /declared control/);
+  env.manager.handleMessage('pulse', { type: 'interaction-done', seq: sent[1].seq });
+  env.manager.restart('pulse'); env.manager.handleMessage('pulse', { type: 'ready' });
+  assert.throws(() => env.manager.interact('page', 'pulse/editor', event, oldRevision), /view changed/);
+  for (let i = 0; i < 8; i++) env.manager.interact('page', 'pulse/editor', event, revision());
+  assert.throws(() => env.manager.interact('page', 'pulse/editor', event, revision()), /busy/);
+  env.manager.setEnabled('pulse', false);
+  assert.throws(() => env.manager.interact('page', 'pulse/editor', event, oldRevision), /unavailable/);
+});
+
+test('static action views receive ready state without publishing metrics', async t => {
+  const plugin = { id: 'actions', name: 'Actions', version: '1.0.0', tmApi: '^1', main: 'main.js', views: [{ id: 'page', title: 'Page', surfaces: ['page'], layout: { type: 'button', action: 'go', label: 'Go' } }] };
+  const f = setup({ plugins: [plugin] }); t.after(() => { f.manager.dispose(); f.bus.dispose(); fs.rmSync(f.root, { recursive: true, force: true }); });
+  const pushes = []; f.manager.onViews((surface, payload) => { if (surface === 'page') pushes.push(payload); });
+  f.manager.setEnabled('actions', true); f.manager.setSurfaceDemand('page', ['actions/page']);
+  await f.clock.advance(300); assert.equal(pushes.at(-1).views['actions/page'].pending, 'starting');
+  f.manager.handleMessage('actions', { type: 'ready' }); await f.clock.advance(300);
+  assert.equal(pushes.at(-1).views['actions/page'].pending, undefined);
+});
+test('idle teardown clears pending actions before a new Worker generation', async t => {
+  const plugin = { id: 'actions', name: 'Actions', version: '1.0.0', tmApi: '^1', main: 'main.js', views: [{ id: 'page', title: 'Page', surfaces: ['page'], layout: { type: 'button', action: 'go', label: 'Go' } }] };
+  const f = setup({ plugins: [plugin] }); t.after(() => { f.manager.dispose(); f.bus.dispose(); fs.rmSync(f.root, { recursive: true, force: true }); });
+  f.manager.setEnabled('actions', true); f.manager.setSurfaceDemand('page', ['actions/page']); f.manager.handleMessage('actions', { type: 'ready' });
+  f.manager.interact('page', 'actions/page', { action: 'go', type: 'press' }, f.manager.payload('page').views['actions/page'].revision);
+  f.manager.setSurfaceDemand('page', []);
+  for (let n = 0; n < 30; n++) { f.manager.handleMessage('actions', { type: 'heartbeat' }); await f.clock.advance(1000); }
+  f.manager.setSurfaceDemand('page', ['actions/page']); f.manager.handleMessage('actions', { type: 'ready' });
+  f.manager.handleMessage('actions', { type: 'heartbeat' }); await f.clock.advance(5000);
+  assert.equal(f.events.some(event => event[0] === 'kill' && event[2] === 'interaction-timeout'), false);
+});

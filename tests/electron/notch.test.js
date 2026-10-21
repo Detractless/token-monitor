@@ -250,7 +250,7 @@ test('top-only real provider projection updates while the side controller is abs
   const code = main.slice(start, main.indexOf('\n// Hand cells', start))
     + main.slice(main.indexOf('function pushNotchCells('), main.indexOf('// The soonest moment any sessions cell'));
   const update = vm.runInNewContext(`${code}; updateEdgeDockCells`, {
-    edgeDockController: null, notchController: controller,
+    edgeDockController: null, notchController: controller, pluginRuntime: null,
     notchPanelItems, notchWeek, notchHistory: { read: () => null }, hubModeGeneration: 0,
     settings: {}, scheduleSessionExpiry() {}, notchLastCells: [],
     edgeDockCellsFor: (value) => buildEdgeDockCells(value, { limitProviders: 'codex' }),

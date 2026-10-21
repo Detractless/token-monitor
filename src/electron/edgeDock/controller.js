@@ -198,7 +198,8 @@ function createEdgeDockController(deps) {
   }
 
   function cellKinds() {
-    return cells.map((cell) => (cell.kind === 'stat' ? 'stat' : 'provider'));
+    // Plugin cells take a stat-sized slot: a label over one compact reading.
+    return cells.map((cell) => (cell.kind === 'stat' || cell.kind === 'plugin' ? 'stat' : 'provider'));
   }
 
   function placement() {

@@ -350,3 +350,11 @@ html:not(.notch-black) .is-notch-attached .notch-panel :is(.notch-week-dates .is
 .notch-rank-share { font-size: 10px; color: var(--notch-dim); text-align: right; }
 
 .notch-panel.is-reduced-motion *, .notch-panel.is-reduced-motion *::before { animation: none !important; transition: none !important; }
+
+/* Plugin pages: the plugin's view fills the page under a kicker row. */
+.notch-page-plugin { display: flex; flex-direction: column; gap: 10px; }
+.notch-plugin-owner { font-size: 10px; color: var(--notch-faint); }
+.notch-plugin-body { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.notch-plugin-body .pv-root { height: 100%; }
+.notch-tab-plugin-icon { display: grid; place-items: center; width: 15px; height: 15px; }
+.notch-tab-plugin-icon .pv-icon { width: 15px; height: 15px; }

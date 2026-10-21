@@ -7,6 +7,7 @@
     <script src="floatingBubbleBoot.js"></script>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="edgeDock/composer.css" />
+    <link rel="stylesheet" href="pluginViews.css" />
   </head>
   <body>
     <main class="shell">
@@ -578,6 +579,21 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div class="settings-group settings-collapsible-group settings-plugins-group">
+          <button class="settings-section-toggle" type="button" data-settings-section="plugins" aria-expanded="false" aria-controls="pluginsSettingsDetails">
+            <span class="settings-section-heading"><span class="settings-section-icon settings-section-icon-plugins" aria-hidden="true"></span><span data-i18n="settings.plugins.title">Plugins</span></span>
+            <span class="settings-section-meta"><span id="pluginsSettingsSummary" class="settings-section-summary"></span><span class="settings-section-disclosure" aria-hidden="true"></span></span>
+          </button>
+          <div id="pluginsSettingsDetails" class="settings-section-details hidden">
+            <p class="settings-note" data-i18n="settings.plugins.intro">Plugins add data sources, views and skins. Plugin code runs in an isolated process without file, credential or network access; it can reach only the hosts you approve.</p>
+            <label class="checkbox-label settings-item">
+              <span class="settings-item-text"><span class="settings-item-title" data-i18n="settings.plugins.enableAll">Enable plugins</span></span>
+              <input id="pluginsEnabledInput" type="checkbox" />
+            </label>
+            <div id="pluginSettingsList" class="plugin-settings-list"></div>
           </div>
         </div>
 
@@ -1651,6 +1667,7 @@
 
       <section id="fixedPeriodMessage" class="fixed-period-message hidden" role="status" aria-live="polite"></section>
 
+      <section id="pluginMainPanel" class="plugin-main-panel hidden"></section>
       <section id="homePanel" class="home-panel hidden"></section>
       <section id="breakdown" class="breakdown"></section>
       <div id="session-detail-head" class="detail-head hidden"></div>
@@ -1801,6 +1818,7 @@
     <script src="../../shared/compactMoney.js"></script>
     <script src="../../shared/fontSettings.js"></script>
     <script src="../../shared/trayText.js"></script>
+    <script src="../../shared/plugins/placements.js"></script>
     <script src="edgeDock/items.js"></script>
     <script src="edgeDock/presentation.js"></script>
     <script src="edgeDock/composer.js"></script>
@@ -1808,6 +1826,10 @@
     <script src="tokenRatePresentation.js"></script>
     <script src="../motionPreference.js"></script>
     <script src="../tokenNumberAnimation.js"></script>
+    <script src="edgeDock/railNumberRoll.js"></script>
+    <script src="../../shared/plugins/numberFormat.js"></script><script src="pluginViews.js"></script>
+    <script src="pluginSettings.js"></script>
+    <script src="pluginMainPages.js"></script>
     <script src="../windowsBackdropMode.js"></script>
     <script src="windowsGlass.js"></script>
     <script src="../macBackdropMode.js"></script>

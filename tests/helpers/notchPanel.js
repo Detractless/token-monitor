@@ -45,7 +45,9 @@ class Element {
     this.ownerDocument.activeElement = this; this.fire('focus');
   }
   querySelectorAll(selector) {
-    const match = node => selector[0] === '.' ? node.classes.has(selector.slice(1))
+    const match = node => selector === '[data-roll-key]:not([data-pv-roll])'
+      ? Object.hasOwn(node.dataset, 'rollKey') && !Object.hasOwn(node.dataset, 'pvRoll')
+      : selector[0] === '.' ? node.classes.has(selector.slice(1))
       : selector.startsWith('[data-') ? Object.hasOwn(node.dataset, selector.slice(6, -1).replace(/-([a-z])/g, (_, char) => char.toUpperCase()))
         : selector === 'button.is-selected' ? node.tagName === 'BUTTON' && node.classes.has('is-selected') : node.tagName.toLowerCase() === selector;
     return this.children.flatMap(node => [...(match(node) ? [node] : []), ...node.querySelectorAll(selector)]);

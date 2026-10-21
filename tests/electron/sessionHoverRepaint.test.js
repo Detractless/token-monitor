@@ -136,7 +136,13 @@ test('Home holds a real overflowing title and only flushes deferred stats on lea
       setTimeout: () => 1, clearTimeout() {}
     },
     els: { homePanel: {
-      replaceChildren(module) { painted.push(module.revision); }, querySelector: () => null
+      children: [],
+      insertBefore(module, before) {
+        const index = before ? this.children.indexOf(before) : this.children.length;
+        this.children.splice(index, 0, module); module.parentNode = this;
+        module.remove = () => { this.children.splice(this.children.indexOf(module), 1); module.parentNode = null; };
+        painted.push(module.revision);
+      }, querySelector: () => null
     } },
     hideHomeActivityTooltip() {}, homeModuleIds: () => ['session'], sessionPresentationOptions: () => ({}),
     renderHomeSessionModule: () => ({ revision: state.stats.revision }), scheduleHomeSessionRepaint() {}
