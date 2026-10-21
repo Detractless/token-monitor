@@ -55,12 +55,13 @@ test('placing on the tray turns the current preset into a custom layout plus the
   assert.ok(!trayLayout.STYLE_IDS.includes('plugin'), 'plugin items are placed by the plugin manager, not offered as a composer style');
 });
 
-test('the Notch takes at most three plugin pages and carries them in its panel data', () => {
+test('Notch selection is independent of visible tab capacity and preserves built-in choices', () => {
   let settings = { notchPluginPages: [] };
-  for (const ref of ['a1/v', 'b1/v', 'c1/v']) settings = { ...settings, ...placementPatch(settings, { ref, surface: 'notch', placed: true }) };
-  assert.throws(() => placementPatch(settings, { ref: 'd1/v', surface: 'notch', placed: true }), /notch-full/);
+  for (const ref of ['a1/v', 'b1/v', 'c1/v', 'd1/v', 'e1/v', 'f1/v', 'g1/v']) settings = { ...settings, ...placementPatch(settings, { ref, surface: 'notch', placed: true }) };
+  settings.notchBuiltinPages = ['limits', 'sessions'];
   const data = buildNotchData({ periods: {} }, [], { ...settings, notchSummaryEnabled: false });
-  assert.deepEqual(data.panel.pluginPages, ['a1/v', 'b1/v', 'c1/v']);
+  assert.deepEqual(data.panel.builtinPages, ['limits', 'sessions']);
+  assert.deepEqual(data.panel.pluginPages, ['a1/v', 'b1/v', 'c1/v', 'd1/v', 'e1/v', 'f1/v', 'g1/v']);
   assert.deepEqual(buildNotchData({ periods: {} }, [], { ...settings, notchSummaryEnabled: false, pluginsEnabled: false }).panel.pluginPages, []);
 });
 

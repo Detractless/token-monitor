@@ -190,7 +190,10 @@
     const arc = svg(document, 'circle', { cx: 18, cy: 18, r: radius, class: 'pv-ring-arc', 'stroke-dasharray': `${circumference}`, 'stroke-dashoffset': `${circumference * (1 - (percent ?? 0) / 100)}` });
     ring.append(arc);
     const caption = el(document, 'span', 'pv-ring-caption', node.caption ?? (percent === null ? '—' : `${Math.round(percent)}%`));
-    if (node.caption == null) { caption._pvNumber = percent; caption._pvFormat = { fmt: 'percent', digits: 0 }; }
+    if (Number.isFinite(node.captionNumber)) {
+      caption._pvNumber = node.captionNumber;
+      caption._pvFormat = node.captionFormat;
+    } else if (node.caption == null) { caption._pvNumber = percent; caption._pvFormat = { fmt: 'percent', digits: 0 }; }
     box.append(ring, caption);
     wrap.append(box);
     if (node.label) wrap.append(el(document, 'span', 'pv-ring-label', node.label));

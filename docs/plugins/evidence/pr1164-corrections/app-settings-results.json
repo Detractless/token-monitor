@@ -1,0 +1,19 @@
+{
+  "builtinToggle": true,
+  "builtinRestore": true,
+  "pluginRows": [
+    {
+      "ref": "plugin:system-monitor/overview",
+      "checked": true
+    },
+    {
+      "ref": "plugin:sketch-pad/canvas",
+      "checked": false
+    },
+    {
+      "ref": "plugin:token-pulse/pulse",
+      "checked": true
+    }
+  ],
+  "horizontalOverflow": false
+}

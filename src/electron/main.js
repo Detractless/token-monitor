@@ -669,6 +669,7 @@ function defaultSettings() {
     pluginsEnabled: true,
     pluginStates: {},
     notchPluginPages: [],
+    notchBuiltinPages: [...pluginPlacements.NOTCH_BUILTIN_PAGES],
     pluginMainPages: [],
     lastViewState: { period: 'today', breakdown: 'home' },
     discordRpcEnabled: false,
@@ -2786,6 +2787,7 @@ function readSettings() {
     merged.pluginsEnabled = parseBoolean(merged.pluginsEnabled, true);
     merged.pluginStates = normalizePluginStates(merged.pluginStates);
     merged.pluginMainPages = pluginPlacements.normalizeRefList(merged.pluginMainPages, 32);
+    merged.notchBuiltinPages = pluginPlacements.normalizeNotchBuiltinPages(merged.notchBuiltinPages);
     merged.notchPluginPages = pluginPlacements.normalizeNotchPluginPages(merged.notchPluginPages);
     merged.trayCustomLayout = normalizeTrayLayout(merged.trayCustomLayout);
     merged.showTrayProviderBadge = parseBoolean(merged.showTrayProviderBadge, false);
@@ -6020,8 +6022,10 @@ function pushNotchCells(visibleStats) {
   const data = notchDataFor(visibleStats, notchLastCells);
   // Tab names and icons are metadata; opening a page alone requests its data.
   if (pluginRuntime) data.panel.pluginCatalog = Object.fromEntries(pluginRuntime.manager.list().plugins
+    .filter(plugin => plugin.status === 'active')
     .flatMap((plugin) => (plugin.views || []).filter((view) => view.surfaces.includes('notch'))
       .map((view) => [view.ref, { title: view.title, icon: view.icon }])));
+  data.panel.pluginPages = data.panel.pluginPages.filter(ref => Object.hasOwn(data.panel.pluginCatalog || {}, ref));
   const history = notchHistory.read(visibleStats, { enabled: settings.historyEnabled !== false, generation: hubModeGeneration });
   if (history) data.panel.week = notchWeek(visibleStats, new Date(), history);
   notchController.setData(data);
@@ -8015,6 +8019,7 @@ app.whenReady().then(() => {
       notchSize: normalizeEdgeDockSize(patch.notchSize ?? settings.notchSize),
       notchCustomScale: normalizeEdgeDockCustomScale(patch.notchCustomScale ?? settings.notchCustomScale),
       notchItems: normalizeEdgeDockItems('notchItems' in (patch || {}) ? patch.notchItems : settings.notchItems),
+      notchBuiltinPages: pluginPlacements.normalizeNotchBuiltinPages(patch.notchBuiltinPages ?? settings.notchBuiltinPages),
       notchPluginPages: pluginPlacements.normalizeNotchPluginPages('notchPluginPages' in (patch || {}) ? patch.notchPluginPages : settings.notchPluginPages),
       pluginMainPages: pluginPlacements.normalizeRefList('pluginMainPages' in (patch || {}) ? patch.pluginMainPages : settings.pluginMainPages, 32),
       pluginsEnabled: parseBoolean(patch.pluginsEnabled ?? settings.pluginsEnabled, true),

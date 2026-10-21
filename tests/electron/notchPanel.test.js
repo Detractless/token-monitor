@@ -881,3 +881,21 @@ test('history keeps the previous week across revisions, throttles reloads and ne
   assert.equal(fresh.complete, true);
   assert.equal(cache.read(at('b'), { generation: 2, now: DAY }), null, 'a backend switch drops the answer');
 });
+
+test('Notch can hide built-ins, switch to the first selected page, and hide all pages', t => {
+  const f = panelFixture(t);
+  const data = payload();
+  data.panel.builtinPages = ['limits', 'breakdown'];
+  f.panel.render(data);
+  assert.equal(f.panel.view.page, 'limits');
+  assert.equal(f.all('notch-tab').filter(button => !button.hidden).length, 2);
+  f.panel.selectPage('home');
+  assert.equal(f.panel.view.page, 'limits', 'hidden pages cannot be selected');
+  data.panel.builtinPages = ['breakdown']; f.panel.render(data);
+  assert.equal(f.panel.view.page, 'breakdown');
+  data.panel.builtinPages = []; f.panel.render(data);
+  assert.equal(f.panel.view.page, '');
+  assert.equal(f.all('notch-page').filter(page => page.classList.contains('is-selected')).length, 0);
+  data.panel.builtinPages = ['home']; f.panel.render(data);
+  assert.equal(f.panel.view.page, 'home');
+});

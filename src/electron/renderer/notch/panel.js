@@ -61,7 +61,38 @@
     const tabPill = el('span', 'notch-tab-pill');
     tabs.append(tabPill);
     const status = el('div', 'notch-status');
-    band.append(tabs, el('div', 'notch-band-gap'), status);
+    const tabRail = el('div', 'notch-tab-rail');
+    const tabViewport = el('div', 'notch-tab-viewport');
+    tabViewport.append(tabs);
+    const previousTabs = el('button', 'notch-tabs-previous');
+    const nextTabs = el('button', 'notch-tabs-next');
+    for (const button of [previousTabs, nextTabs]) {
+      button.type = 'button';
+      const arrow = el('span', 'cursor-disclosure-icon');
+      arrow.setAttribute('aria-hidden', 'true');
+      button.append(arrow);
+    }
+    previousTabs.addEventListener('click', () => stepTab(-1));
+    nextTabs.addEventListener('click', () => stepTab(1));
+    tabRail.append(previousTabs, tabViewport, nextTabs);
+    band.append(tabRail, el('div', 'notch-band-gap'), status);
+    function stepTab(delta) {
+      const page = pageOrder[pageOrder.indexOf(view.page) + delta];
+      if (page) { selectPage(page); tabButtons.get(page)?.focus({ preventScroll: true }); }
+    }
+    function fitTabs() {
+      const overflow = tabs.scrollWidth > tabRail.clientWidth + 1;
+      tabRail.classList.toggle('has-overflow', overflow);
+      tabRail.classList.toggle('is-tight', tabRail.clientWidth < 78);
+      previousTabs.hidden = nextTabs.hidden = !overflow;
+      previousTabs.disabled = pageOrder.indexOf(view.page) <= 0;
+      nextTabs.disabled = pageOrder.indexOf(view.page) >= pageOrder.length - 1;
+      const selected = tabButtons.get(view.page);
+      if (!selected) return;
+      const left = selected.offsetLeft, right = left + selected.offsetWidth;
+      if (left < tabViewport.scrollLeft) tabViewport.scrollLeft = left;
+      else if (right > tabViewport.scrollLeft + tabViewport.clientWidth) tabViewport.scrollLeft = right - tabViewport.clientWidth;
+    }
     const pages = el('div', 'notch-pages');
     // The fixed pages first, then any plugin pages the user placed here.
     let pageOrder = [...PAGES];
@@ -97,12 +128,14 @@
     node.append(band, pages);
     // Placed plugin pages arrive with each push; a page whose plugin went away
     // is removed, and the panel falls back to Home if it was showing.
-    function syncPluginPages(refs) {
+    function syncPluginPages(refs, builtins) {
       const wanted = (Array.isArray(refs) && pluginHost ? refs : []).map((ref) => `${PLUGIN_PAGE_PREFIX}${ref}`);
-      const next = [...PAGES, ...wanted];
+      const selectedBuiltins = Array.isArray(builtins) ? PAGES.filter(page => builtins.includes(page)) : PAGES;
+      const next = [...selectedBuiltins, ...wanted];
       if (next.join('|') === pageOrder.join('|')) return;
       for (const page of pageOrder) {
-        if (next.includes(page)) continue;
+        if (next.includes(page) || PAGES.includes(page)) continue;
+        releasePluginPage(page);
         pageNodes.get(page)?.remove();
         tabButtons.get(page)?.remove();
         pageNodes.delete(page);
@@ -111,10 +144,12 @@
       }
       for (const page of wanted) if (!pageNodes.has(page)) addPage(page);
       pageOrder = next;
+      for (const [page, button] of tabButtons) button.hidden = !next.includes(page);
       for (const page of pageOrder) tabs.append(tabButtons.get(page));
-      if (!pageOrder.includes(view.page)) view.page = 'home';
+      if (!pageOrder.includes(view.page)) { releasePluginPage(view.page); view.page = pageOrder[0] || ''; }
     }
     tabs.addEventListener('keydown', (event) => {
+      if (!pageOrder.length) return;
       const current = pageOrder.indexOf(view.page);
       const index = event.key === 'Home' ? 0 : event.key === 'End' ? pageOrder.length - 1
         : event.key === 'ArrowRight' ? (current + 1) % pageOrder.length
@@ -258,7 +293,9 @@
     }
 
     function paintTabs() {
-      tabs.setAttribute('aria-label', t('settings.notch.experimentalTitle'));
+      tabs.setAttribute('aria-label', t('settings.notch.pages'));
+      previousTabs.setAttribute('aria-label', t('settings.notch.previousPage'));
+      nextTabs.setAttribute('aria-label', t('settings.notch.nextPage'));
       for (const [page, button] of tabButtons) {
         const selected = page === view.page;
         button.classList.toggle('is-selected', selected);
@@ -278,7 +315,9 @@
         }
         button.setAttribute('aria-label', button.title);
       }
-      tabPill.style.transform = `translateX(${pageOrder.indexOf(view.page) * 36}px)`;
+      tabPill.hidden = !view.page;
+      tabPill.style.transform = `translateX(${Math.max(0, pageOrder.indexOf(view.page)) * 36}px)`;
+      fitTabs();
       for (const [page, pageNode] of pageNodes) {
         pageNode.classList.toggle('is-selected', page === view.page);
         pageNode.inert = page !== view.page;
@@ -1028,6 +1067,7 @@
     }
 
     function renderPage(page, { force = false } = {}) {
+      if (!page || !pageNodes.has(page)) return;
       const nowMs = Date.now();
       const key = pageKey(page, nowMs);
       if (!force && pageKeys.get(page) === key) return;
@@ -1078,7 +1118,7 @@
 
     function render(next, { opening = false } = {}) {
       payload = next;
-      syncPluginPages(next?.panel?.pluginPages);
+      syncPluginPages(next?.panel?.pluginPages, next?.panel?.builtinPages);
       node.classList.toggle('is-reduced-motion', prefersReducedMotion());
       if (opening) {
         view.scrub = null; pageKeys = new Map();
@@ -1098,6 +1138,7 @@
       node.style.setProperty('--notch-band-height', `${attached ? geometry.height / zoom : PANEL_METRICS.band}px`);
       node.style.setProperty('--notch-gap-width', `${attached ? geometry.gapWidth / zoom : 0}px`);
       node.classList.toggle('is-attached', attached);
+      fitTabs();
     }
 
     node.addEventListener('pointerleave', () => { if (view.scrub) { view.scrub = null; renderPage('home', { force: true }); } });
@@ -1116,7 +1157,9 @@
       ? new window.ResizeObserver(() => { fitHomeFuel(); fitLimitPlans(); }) : null;
     fuelObserver?.observe(pageNodes.get('home'));
     fuelObserver?.observe(pageNodes.get('limits'));
-    window.addEventListener('pagehide', () => { suspend(); fuelObserver?.disconnect(); }, { once: true });
+    const tabObserver = typeof window.ResizeObserver === 'function' ? new window.ResizeObserver(fitTabs) : null;
+    tabObserver?.observe(tabRail);
+    window.addEventListener('pagehide', () => { suspend(); fuelObserver?.disconnect(); tabObserver?.disconnect(); }, { once: true });
     paintTabs();
     return { node, render, place, selectPage, suspend, pluginViewsChanged, contentHeight: panelContentHeight, view };
   }

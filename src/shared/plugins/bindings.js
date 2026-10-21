@@ -116,6 +116,10 @@ function createResolver({ read, history, pluginId, locale = 'en', sanitizeDraw =
       const number = resolveProp('number', node.value);
       if (number !== null) { out.valueNumber = number; out.valueFormat = spend(numberFormat(node.value)); }
     }
+    if (node.type === 'ring' && node.caption && typeof node.caption === 'object' && typeof node.caption.$ === 'string') {
+      const number = resolveProp('number', node.caption);
+      if (number !== null) { out.captionNumber = number; out.captionFormat = spend(numberFormat(node.caption)); }
+    }
     if (node.children) out.children = node.children.map(resolveNode).filter(Boolean);
     return out;
   }

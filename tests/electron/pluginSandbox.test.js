@@ -68,3 +68,28 @@ test('late failure callbacks from a retired host cannot stop its replacement', a
   assert.deepEqual(exits, []);
   sandbox.stopAll();
 });
+
+for (const message of [{ type: 'tick-done', seq: 1 }, { type: 'call', id: 1, op: 'storage.get', args: { key: 'x' } }]) {
+  test(`host recovers instead of silently losing ${message.type} after a short burst`, () => {
+    const forwarded = [];
+    let receive, worker;
+    class Worker {
+      constructor() { worker = this; this.stopped = false; }
+      terminate() { this.stopped = true; }
+      postMessage() {}
+    }
+    const context = vm.createContext({ window: { tmPluginHost: { send: m => forwarded.push(m), onMessage: cb => { receive = cb; } } },
+      TextEncoder, performance: { now: () => 0 }, Worker, Blob, URL, setInterval() {} });
+    const host = path.resolve(__dirname, '../../src/electron/plugins/host');
+    for (const file of ['message.js', 'runtime.js']) vm.runInContext(fs.readFileSync(path.join(host, file), 'utf8'), context);
+    receive({ type: 'boot', source: '' });
+    context.deliver = message => worker.onmessage({ data: message });
+    vm.runInContext(`for(let i=0;i<200;i++) deliver({type:'log',text:'burst'}); deliver(${JSON.stringify(message)});`, context);
+    assert.equal(worker.stopped, true);
+    assert.equal(forwarded.at(-1).type, 'fatal');
+    assert.equal(forwarded.at(-1).reason, 'protocol-rate-limit');
+    receive({ type: 'boot', source: '' });
+    vm.runInContext("deliver({type:'ready'});", context);
+    assert.equal(forwarded.at(-1).type, 'ready', 'replacement gets a fresh budget');
+  });
+}

@@ -12,7 +12,13 @@
 })(typeof window !== 'undefined' ? window : null, function createPluginPlacementsApi() {
   const REF_RE = /^[a-z0-9][a-z0-9-]{1,39}\/[a-z][a-z0-9-]{0,31}$/;
   const HOME_PREFIX = 'plugin:';
-  const MAX_NOTCH_PAGES = 3;
+  // Storage bound: 64 plugins × 16 views. Visible capacity is geometry-driven.
+  const MAX_NOTCH_PAGES = 1024;
+  const NOTCH_BUILTIN_PAGES = Object.freeze(['home', 'limits', 'sessions', 'breakdown']);
+
+  function normalizeNotchBuiltinPages(value) {
+    return Array.isArray(value) ? NOTCH_BUILTIN_PAGES.filter(page => value.includes(page)) : [...NOTCH_BUILTIN_PAGES];
+  }
 
   function isRef(value) {
     return typeof value === 'string' && REF_RE.test(value);
@@ -62,6 +68,8 @@
   return {
     HOME_PREFIX,
     MAX_NOTCH_PAGES,
+    NOTCH_BUILTIN_PAGES,
+    normalizeNotchBuiltinPages,
     homeToken,
     isHomeToken,
     isRef,

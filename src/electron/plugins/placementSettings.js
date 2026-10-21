@@ -74,7 +74,7 @@ function placementPatch(settings, { ref, surface, placed }, context = {}) {
   }
   const pages = placements.normalizeNotchPluginPages(settings.notchPluginPages).filter((entry) => entry !== ref);
   if (placed) {
-    if (pages.length >= placements.MAX_NOTCH_PAGES) throw new Error('notch-full');
+    if (pages.length >= placements.MAX_NOTCH_PAGES) throw new Error('Notch page storage limit exceeded');
     pages.push(ref);
   }
   return { notchPluginPages: pages };

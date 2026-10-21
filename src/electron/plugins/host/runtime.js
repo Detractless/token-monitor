@@ -30,6 +30,7 @@
 
   function boot(message) {
     stop();
+    tokens = 200; tokenAt = performance.now(); dropped = 0;
     workerUrl = URL.createObjectURL(new Blob([String(message.source || '')], { type: 'text/javascript' }));
     try {
       worker = new Worker(workerUrl, { name: 'plugin' });
@@ -38,7 +39,9 @@
       return;
     }
     lastPong = Date.now();
+    const activeWorker = worker;
     worker.onmessage = (event) => {
+      if (worker !== activeWorker) return;
       const data = event.data;
       if (!data || typeof data !== 'object' || Array.isArray(data)) return;
       if (data.type === 'pong') {
@@ -52,6 +55,12 @@
       tokens = Math.min(200, tokens + (at - tokenAt) / 10);
       tokenAt = at;
       if (tokens < 1) {
+        // Losing a request/completion strands promises or the tick scheduler.
+        // Fail this worker once; main applies its bounded restart/circuit policy.
+        if (['ready', 'tick-done', 'interaction-done', 'call'].includes(data.type)) {
+          fail('protocol-rate-limit', 'worker control message budget exceeded');
+          return;
+        }
         if (++dropped >= 400) fail('flooding', 'worker message budget exceeded');
         return;
       }

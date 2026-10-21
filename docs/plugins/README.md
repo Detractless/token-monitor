@@ -8,7 +8,7 @@ This local implementation includes the built-in System Monitor, installable [Tok
 
 1. Open Settings → Plugins → Official. System Monitor ships with the app; Token Pulse and Sketch Pad can be previewed and installed from the offline catalog. Sketch Pad has a personal note, drawing canvas, pen controls, Undo and Clear; content persists in its private local store.
 2. Review the exact source, version and permissions. Installation leaves code disabled; choose Allow and enable separately. Updates preserve grants and pause execution if they request more access.
-3. Select placement buttons for Home, tray, Edge Dock and Notch. Their existing ordering controls still apply. Enable Edge Dock/Notch separately; Notch accepts up to three plugin tabs.
+3. Select placement buttons for Home, tray, Edge Dock and Notch. Their existing ordering controls still apply. Enable Edge Dock/Notch separately; choose built-in and plugin pages together in Notch settings. The tab row scrolls within the camera-safe lane when selected pages exceed the available width.
 4. Enable Main app page placement only for views that declare it, then choose the page in the main app’s bottom-left view menu. Open a detached window from that page when useful. Both share visibility demand; switching pages preserves session-local drafts and scroll.
 5. Import a `.tmplugin` file with From file. Developer options also import a folder into managed storage or open the unmanaged authoring folder for explicit Reload.
 6. Community → Manage sources accepts a user-added HTTPS catalog. Ordinary users do not need a public key. Optional Ed25519 pinning is advanced; Community remains Unreviewed. No external source is enrolled by the app.
@@ -49,7 +49,7 @@ Create `cpu-readout/manifest.json`:
 }
 ```
 
-No process is created for a declarative plugin. The data bus samples each source once at the fastest cadence requested by its current consumers. Views request samples only while visible; background rules are separate consumers.
+No process is created for a declarative plugin. The data bus samples each source once at the fastest cadence requested by its current consumers. Views request samples only while visible; background rules are separate, explicitly enabled consumers. New installations default background activity off; hiding, disabling or removing the last consumer releases the shared sampler.
 
 ## Manifest and views
 
@@ -128,7 +128,7 @@ tm.onTick(({ mode }) => {
 | `tm.net.fetch(url, init?)` | Returns `{ status, ok, headers, text }`, requiring `network`; this is not a browser `Response` |
 | `tm.log(...)`, `tm.warn(...)` | Bounded diagnostics visible in Settings |
 
-`visible.intervalSeconds` selects a 1–60 second cadence (default 2). Optional `background.intervalSeconds` selects a 5–3600 second cadence (default 60). Background rules continue when no view is shown only while the user allows background activity. Declarative `alerts` use a 15-second cadence, sustained thresholds and cooldowns; see the [System Monitor manifest](../../src/electron/plugins/builtin/system-monitor/manifest.json).
+`visible.intervalSeconds` selects a 1–60 second cadence (default 2). Optional `background.intervalSeconds` selects a 5–3600 second cadence (default 60). Background activity is off for new installations and starts only when explicitly enabled in plugin settings. Existing saved choices are retained. Declarative `alerts` use a 15-second cadence, sustained thresholds and cooldowns; see the [System Monitor manifest](../../src/electron/plugins/builtin/system-monitor/manifest.json).
 
 When nothing needs a code plugin, host ticks, data forwarding and broker operations pause. The Worker can remain for a 30-second grace period before it is destroyed. Native JavaScript timers are not frozen by this policy; CPU limits/watchdogs still apply. Disable, loss of approval or the master switch destroys the process immediately and aborts outstanding broker requests. Old responses cannot be delivered to a restarted Worker. Reload flushes each plugin's pending store before replacing its owner.
 
@@ -136,7 +136,9 @@ When nothing needs a code plugin, host ticks, data forwarding and broker operati
 
 Each code plugin uses its own origin in a hidden sandboxed Electron renderer, with context isolation and Node disabled. The trusted host runs its code in a Worker. CSP, session request filtering, denied browser permissions/navigation/downloads, sender-scoped IPC and validated messages form independent checks. Plugin code cannot write UI markup or execute in the main process.
 
-Watchdogs stop unresponsive Workers. Both host and main rate-limit messages. The supervisor samples CPU and memory, restarts with backoff and opens a circuit after repeated failures. These are sampled resource budgets, not instantaneous OS memory caps. A fast allocation can transiently exceed a budget before termination; supported platforms need their own runtime verification. On macOS the trusted preload reports private memory as well as main's resident measurement, because compressed pages can disappear from the latter ([Electron memory semantics](https://www.electronjs.org/docs/latest/api/process#processgetprocessmemoryinfo)).
+Watchdogs stop unresponsive Workers. Both host and main rate-limit messages. A rate-limited lifecycle completion or API request terminates that Worker through the existing backoff/circuit policy instead of silently stranding it; individual calls are not replayed. Every tick has a 30-second deadline independent of heartbeat health, and only its matching sequence completes it. The supervisor samples CPU and memory, restarts with backoff and opens a circuit after repeated failures. These are sampled resource budgets, not instantaneous OS memory caps. A fast allocation can transiently exceed a budget before termination; supported platforms need their own runtime verification. On macOS the trusted preload reports private memory as well as main's resident measurement, because compressed pages can disappear from the latter ([Electron memory semantics](https://www.electronjs.org/docs/latest/api/process#processgetprocessmemoryinfo)).
+
+Explicit numeric ring caption bindings use the same Roll/Count formatting as stat values; literal captions are not parsed as numbers.
 
 Run `npm run verify` for lint and unit/regression tests. Run `npm run verify:plugins -- --out /tmp/plugin-report.json` for actual Electron isolation, denied capabilities, shared sampling, background cadence, idle teardown, CPU/memory measurements and hostile-plugin fault containment. Unset `ELECTRON_RUN_AS_NODE` if your shell has set it. The script uses disposable user data and local fixtures; it does not alter the user's settings. It deliberately allocates memory and creates busy/flooding Workers.
 

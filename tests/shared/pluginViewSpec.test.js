@@ -242,3 +242,19 @@ test('Count descriptors preserve locale, units and scaled values without applyin
     }
   }
 });
+
+test('explicit ring captions carry their own numeric binding without parsing literal text', () => {
+  const resolver = () => createResolver({ read: id => ({ value: id === 'sys.cpu' ? 37 : { percent: 72 } }), history: () => [], pluginId: 'system-monitor', locale: 'en' });
+  const manifest = require('../../src/electron/plugins/builtin/system-monitor/manifest.json');
+  const rings = [];
+  function walk(value) { if (!value || typeof value !== 'object') return; if (value.type === 'ring') rings.push(value); Object.values(value).forEach(v => { if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === 'object') walk(v); }); }
+  walk(manifest.views);
+  assert.ok(rings.length >= 2);
+  for (const ring of rings) {
+    const resolved = resolver().resolveNode(ring);
+    assert.equal(resolved.captionNumber, ring.caption.$ === 'sys.cpu' ? 37 : 72);
+    assert.equal(resolved.captionFormat.fmt, 'percent');
+  }
+  assert.equal(resolver().resolveNode({ type: 'ring', value: 50, caption: '72%' }).captionNumber, undefined);
+  assert.equal(createResolver({ read: () => null, history: () => [], pluginId: 'demo' }).resolveNode(rings[0]).captionNumber, undefined);
+});

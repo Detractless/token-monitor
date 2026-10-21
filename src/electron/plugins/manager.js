@@ -24,6 +24,7 @@ const { MAX_MANIFEST_BYTES, assertHostCompatibility } = require('./contracts');
 const ALERT_INTERVAL_MS = 15_000;
 const IDLE_GRACE_MS = 30_000;
 const BOOT_TIMEOUT_MS = 10_000;
+const TICK_TIMEOUT_MS = 30_000;
 const METRICS_INTERVAL_MS = 5_000;
 const PUSH_THROTTLE_MS = 250;
 const LOG_LIMIT = 100;
@@ -38,7 +39,7 @@ function normalizePluginStates(value) {
     if (!/^[a-z0-9][a-z0-9-]{1,39}$/.test(id) || !raw || typeof raw !== 'object') continue;
     out[id] = {
       enabled: raw.enabled === true,
-      background: raw.background !== false,
+      background: raw.background === true,
       grant: permissionsApi.normalizeGrant(raw.grant)
     };
   }
@@ -159,7 +160,7 @@ function createPluginManager({
 
   function freshRuntime() {
     return {
-      state: 'stopped', mode: null, seq: 0, revision: ++interactionRevision, interactionSeq: 0, pendingInteractions: new Map(), interactionLimit: createRateLimiter({ capacity: 40, perSecond: 30, now }), inTick: false, tickTimer: null, idleTimer: null,
+      state: 'stopped', mode: null, seq: 0, revision: ++interactionRevision, interactionSeq: 0, pendingInteractions: new Map(), interactionLimit: createRateLimiter({ capacity: 40, perSecond: 30, now }), inTick: false, tickDeadline: null, tickTimer: null, idleTimer: null,
       bootTimer: null, restartTimer: null, subscriptions: new Set(), metrics: null,
       limiter: createRateLimiter({ ...MESSAGE_RATE, now }), notifyLimiter: createRateLimiter({ capacity: 3, perSecond: 1 / 60, now }),
       netLimiter: createRateLimiter({ capacity: 10, perSecond: 0.5, now }), requests: new Set(), generation: 0, dropped: 0, lastError: ''
@@ -221,7 +222,7 @@ function createPluginManager({
   }
 
   function backgroundAllowed(plugin) {
-    return states()[plugin.id]?.background !== false;
+    return states()[plugin.id]?.background === true;
   }
 
   function resolveRef(ref) {
@@ -287,7 +288,7 @@ function createPluginManager({
   // ---- Sandboxed workers ---------------------------------------------------
 
   function clearRuntimeTimers(runtime) {
-    for (const name of ['tickTimer', 'idleTimer', 'bootTimer']) {
+    for (const name of ['tickTimer', 'tickDeadline', 'idleTimer', 'bootTimer']) {
       if (runtime[name]) clearTimer(runtime[name]);
       runtime[name] = null;
     }
@@ -313,7 +314,17 @@ function createPluginManager({
     if (runtime.inTick || runtime.state !== 'running') return;
     runtime.seq += 1;
     runtime.inTick = true;
-    if (!sandbox?.send(plugin.id, { type: 'tick', seq: runtime.seq, mode: runtime.mode, now: now() })) runtime.inTick = false;
+    if (!sandbox?.send(plugin.id, { type: 'tick', seq: runtime.seq, mode: runtime.mode, now: now() })) {
+      runtime.inTick = false;
+      return;
+    }
+    const generation = runtime.generation, seq = runtime.seq;
+    runtime.tickDeadline = setTimer(() => {
+      if (runtime.generation !== generation || runtime.seq !== seq || !runtime.inTick) return;
+      runtime.tickDeadline = null;
+      sandbox.kill(plugin.id, 'tick-timeout');
+    }, TICK_TIMEOUT_MS);
+    runtime.tickDeadline?.unref?.();
   }
 
   function startWorker(plugin) {
@@ -330,6 +341,8 @@ function createPluginManager({
       addLog(plugin, 'error', `start failed: ${error.message}`);
       return;
     }
+    runtime.limiter = createRateLimiter({ ...MESSAGE_RATE, now });
+    runtime.dropped = 0;
     runtime.state = 'starting';
     runtime.inTick = false;
     supervisor.started(plugin.id);
@@ -556,6 +569,10 @@ function createPluginManager({
       return;
     }
     if (!runtime.limiter.take()) {
+      if (['ready', 'tick-done', 'interaction-done', 'call'].includes(message.type)) {
+        sandbox?.kill(pluginId, 'protocol-rate-limit');
+        return;
+      }
       runtime.dropped += 1;
       if (runtime.dropped === 1 || runtime.dropped % 100 === 0) addLog(plugin, 'warn', `message rate limit: ${runtime.dropped} dropped`);
       if (runtime.dropped >= FLOOD_DROPS) sandbox?.kill(pluginId, 'flooding');
@@ -580,6 +597,9 @@ function createPluginManager({
         runtime.pendingInteractions.delete(message.seq);
         return;
       case 'tick-done':
+        if (!runtime.inTick || message.seq !== runtime.seq) return;
+        if (runtime.tickDeadline) clearTimer(runtime.tickDeadline);
+        runtime.tickDeadline = null;
         runtime.inTick = false;
         return;
       case 'publish': {
@@ -785,7 +805,7 @@ function createPluginManager({
       hasCode: Boolean(manifest.main),
       background: {
         supported: Boolean(manifest.background || manifest.alerts.length),
-        enabled: state?.background !== false
+        enabled: state?.background === true
       },
       views: manifest.views.map((view) => ({
         ref: placements.pluginRef(plugin.id, view.id),
@@ -810,7 +830,7 @@ function createPluginManager({
 
   function writeState(pluginId, patch) {
     const current = states();
-    const next = { ...current, [pluginId]: { enabled: false, background: true, grant: { permissions: [], hosts: [] }, ...current[pluginId], ...patch } };
+    const next = { ...current, [pluginId]: { enabled: false, background: false, grant: { permissions: [], hosts: [] }, ...current[pluginId], ...patch } };
     saveStates(next);
   }
 

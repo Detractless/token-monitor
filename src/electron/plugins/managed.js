@@ -140,7 +140,7 @@ function createManagedPlugins({ root, userDir, dataDir, manager, getSettings, sa
       } else {
         if (current) fs.writeFileSync(previous, current.bytes, { mode: 0o600 });
         else fs.rmSync(previous, { force: true });
-        if (operation === 'install') patch.pluginStates[id] = { enabled: false, background: true, grant: { permissions: [], hosts: [] } };
+        if (operation === 'install') patch.pluginStates[id] = { enabled: false, background: false, grant: { permissions: [], hosts: [] } };
         // Updating never grants new capabilities. The manager pauses an enabled
         // plugin when its new manifest exceeds the previously accepted grant.
       }

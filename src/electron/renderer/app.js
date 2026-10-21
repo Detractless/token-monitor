@@ -12707,6 +12707,15 @@ window.addEventListener('blur', () => {
   if (state.viewSwitcherOpen) setViewSwitcherOpen(false);
 });
 
+function renderNotchPageChoices() {
+  window.TokenMonitorNotchPageSettings?.render({ document, container: document.getElementById('notchPageChoices'),
+    settings: state.settings, catalog: state.pluginCatalog, t,
+    save: async patch => { await saveSettings(patch); },
+    place: async (ref, placed) => { await pluginApi.place(ref, 'notch', placed); },
+    onError: error => setStatus(error.message, true)
+  });
+}
+
 // ---- Plugins -------------------------------------------------------------
 // The catalog (from main) decides which plugin views exist; the view host
 // paints resolved views into Home and reports what is visible, so main only
@@ -12735,12 +12744,13 @@ function applyPluginCatalog(list) {
   // Home and the theme chips depend only on which plugins and views are
   // active; process metrics refresh every few seconds and must not re-render.
   const key = JSON.stringify((list.plugins || []).map((plugin) => [plugin.id, plugin.status,
-    (plugin.views || []).map((view) => [view.ref, view.title, view.surfaces, view.placements?.page]), (plugin.skins || []).map((skin) => skin.id)]));
+    (plugin.views || []).map((view) => [view.ref, view.title, view.surfaces, view.placements?.page, view.placements?.notch]), (plugin.skins || []).map((skin) => skin.id)]));
   if (key !== pluginCatalogKey) {
     pluginCatalogKey = key;
     render();
     renderViewSwitcher();
     renderThemePresetChips();
+    renderNotchPageChoices();
     if (isSettingsSurfaceVisible()) preserveSettingsPanelScroll(renderViewPreferences);
   }
   return list;
@@ -12783,7 +12793,7 @@ pluginSettingsPanel = pluginApi && window.TokenMonitorPluginSettings
     setDetailTooltip: limitWindowsView.setDetailTooltip,
     onError: (error) => {
       const message = String(error?.message || error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
-      const known = { 'page-full': 'settings.plugins.pageFull', 'notch-full': 'settings.plugins.notchFull', 'tray-full': 'settings.plugins.trayFull' }[message];
+      const known = { 'page-full': 'settings.plugins.pageFull', 'tray-full': 'settings.plugins.trayFull' }[message];
       setStatus(known ? t(known) : t('settings.plugins.actionFailed', { error: message }), true);
     },
     onApplySkin: (skin) => void applyPluginSkin(skin),
@@ -13647,6 +13657,7 @@ function syncDockControls() {
   els.notchFeature?.classList.toggle('hidden', !notchAvailable);
   if (els.notchInput) els.notchInput.checked = notchEnabled;
   els.notchOptions?.classList.toggle('hidden', !notchEnabled);
+  renderNotchPageChoices();
   syncNotchStyleInput();
   for (const input of els.notchShapeInputs) input.checked = input.value === (state.settings?.notchShape || 'auto');
   syncNotchSummaryMode();
