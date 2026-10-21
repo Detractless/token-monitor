@@ -26,14 +26,13 @@ function fixture(t) {
 }
 
 test('explicit mirror selection is narrow, durable, reversible, and respects the configured Claude root', (t) => {
-  const { root, projects, mirror, options } = fixture(t);
-  assert.deepEqual(claudeRemoteMirrors({ ...options, claudeRemoteMirrorsExcluded: false }), { dirs: [], sessionKeys: [] });
+  const { root, projects, options } = fixture(t);
+  assert.deepEqual(claudeRemoteMirrors({ ...options, claudeRemoteMirrorsExcluded: false }), { sessionKeys: [] });
   const selected = claudeRemoteMirrors(options);
-  assert.deepEqual(selected, { root: projects, dirs: [mirror], sessionKeys: [`claude:${id}`] });
+  assert.deepEqual(selected, { root: projects, sessionKeys: [`claude:${id}`] });
   fs.rmSync(projects, { recursive: true });
   assert.deepEqual(claudeRemoteMirrors(options), selected, 'deleted mirrors remain excluded from retained source caches');
-  assert.deepEqual(claudeRemoteMirrors({ ...options, env: { CLAUDE_CONFIG_DIR: path.join(root, 'other') } }).dirs, []);
-  assert.equal(tokscaleCommand({ claudeExcludedDirs: [mirror] }).env.TOKSCALE_EXCLUDED_CLAUDE_DIRS, JSON.stringify([mirror]));
+  assert.deepEqual(claudeRemoteMirrors({ ...options, env: { CLAUDE_CONFIG_DIR: path.join(root, 'other') } }).sessionKeys, []);
   assert.equal(tokscaleCommand().env.TOKSCALE_EXCLUDED_CLAUDE_DIRS, undefined);
 });
 
@@ -111,7 +110,7 @@ test('mirror source transport stays bounded with many sessions', (t) => {
     fs.mkdirSync(path.join(projects, `ssh-${index.toString(16).padStart(8, '0')}-2222-4333-8444-555555555555`));
   }
   const selected = claudeRemoteMirrors(options);
-  assert.ok(JSON.stringify(selected.dirs).length > 32767);
+  assert.ok(selected.sessionKeys.length === 401);
   const env = tokscaleCommand({ claudeRemoteMirrorRoot: selected.root }).env;
   assert.equal(env.TOKSCALE_CLAUDE_REMOTE_MIRROR_ROOT, projects);
   assert.equal(env.TOKSCALE_EXCLUDED_CLAUDE_DIRS, undefined);
@@ -137,4 +136,104 @@ test('mirror policy anchors cannot be reused after the effective Claude root cha
     claudeRemoteMirrorsExcluded: true, env: { CLAUDE_CONFIG_DIR: root }
   }, '');
   assert.notEqual(fingerprint('/first'), fingerprint('/second'));
+});
+
+for (const content of ['{broken', '{"roots":null}', '{"roots":[]}', '{"roots":{"/old":[42]}}']) {
+  test(`corrupt mirror state recovers collection without replaying unknown archive mirrors: ${content}`, async (t) => {
+    const { options, mirror } = fixture(t);
+    fs.rmSync(mirror, { recursive: true });
+    fs.writeFileSync(options.mirrorStatePath, content);
+    const progress = [];
+    let captured;
+    const events = [];
+    const scan = { ...options, clients: 'claude', allTimeSince: '2020-01-01', projectsEnabled: false,
+      historyEnabled: false, onProgress: value => progress.push(value), onAnchorComputed: value => { captured = value; },
+      onDiagnosticEvent: value => events.push(value),
+      runTokscale: async () => ({ claudeSourceExclusions: true, entries: [] }) };
+    const result = await collectUsageOnce(scan);
+    assert.equal(result.claudeMirrorArchiveRecovery, true);
+    assert.equal(captured.claudeMirrorArchiveRecovery, true);
+    const recoveredAnchor = { dateKey: localTodayKey(), ...captured.windowsPeriods,
+      excludedSessionKeys: captured.excludedSessionKeys, claudeMirrorArchiveRecovery: true };
+    const eventCount = events.length;
+    await collectUsageOnce({ ...scan, todayOnlyAnchor: recoveredAnchor });
+    assert.equal(events.length, eventCount, 'watch ticks do not flood recovery diagnostics');
+    assert.ok(progress.every(value => value.claudeMirrorArchiveRecovery === true));
+    assert.ok(events.some(event => event.code === 'storage-claude-mirror-state-recovered'));
+    const files = fs.readdirSync(path.dirname(options.mirrorStatePath)).filter(name => name.includes('.corrupt'));
+    assert.equal(files.length, 1);
+    assert.equal(fs.readFileSync(path.join(path.dirname(options.mirrorStatePath), files[0]), 'utf8'), content);
+    assert.equal((await collectUsageOnce(scan)).claudeMirrorArchiveRecovery, true, 'recovery guard survives the rebuilt file');
+    const archive = captureSessionUsageArchive(null, { allTime: { sessions: {
+      [`claude:${id}`]: { client: 'claude', sessionId: id, totalTokens: 100 },
+      'claude:child': { client: 'claude', sessionId: 'child', parentSessionId: id, totalTokens: 30 },
+      'codex:native': { client: 'codex', sessionId: 'native', totalTokens: 20 }
+    } } });
+    assert.equal(applySessionUsageArchive(result, archive).allTime.totalTokens, 20);
+    assert.equal(applySessionUsageArchive({ ...result, claudeMirrorArchiveRecovery: false }, archive).allTime.totalTokens, 150);
+    const disabled = await collectUsageOnce({ ...scan, claudeRemoteMirrorsExcluded: false });
+    assert.notEqual(disabled.claudeMirrorArchiveRecovery, true);
+  });
+}
+
+test('mirror recovery is read-only during seed inspection and does not swallow filesystem errors', (t) => {
+  const { options } = fixture(t);
+  fs.writeFileSync(options.mirrorStatePath, '{broken');
+  assert.equal(claudeRemoteMirrors({ ...options, anchorPersistenceEnabled: false }).recoveryRequired, true);
+  assert.equal(fs.readFileSync(options.mirrorStatePath, 'utf8'), '{broken');
+  assert.equal(fs.readdirSync(path.dirname(options.mirrorStatePath)).some(name => name.includes('.corrupt')), false);
+  fs.unlinkSync(options.mirrorStatePath);
+  fs.mkdirSync(options.mirrorStatePath);
+  assert.throws(() => claudeRemoteMirrors(options), error => error.code === 'EISDIR');
+});
+
+test('recovery leaves live Claude usage and archive bytes intact and clears only with explicit repair', (t) => {
+  const { options } = fixture(t);
+  fs.writeFileSync(options.mirrorStatePath, '{broken');
+  const selection = claudeRemoteMirrors(options);
+  const archive = captureSessionUsageArchive(null, { allTime: { sessions: {
+    'claude:local': { client: 'claude', sessionId: 'local', totalTokens: 100 },
+    'claude:missing': { client: 'claude', sessionId: 'missing', totalTokens: 40 }
+  } } });
+  const before = JSON.stringify(archive);
+  const visible = applySessionUsageArchive({ claudeMirrorArchiveRecovery: selection.recoveryRequired,
+    allTime: { totalTokens: 20, sessions: { 'claude:local': { client: 'claude', sessionId: 'local', totalTokens: 20 } } }
+  }, archive);
+  assert.equal(visible.allTime.totalTokens, 20);
+  assert.equal(JSON.stringify(archive), before);
+  fs.writeFileSync(options.mirrorStatePath, JSON.stringify({ roots: {} }));
+  assert.notEqual(claudeRemoteMirrors(options).recoveryRequired, true);
+});
+
+test('mirror recovery persists through collector restart and watch previews', { timeout: 10000 }, async (t) => {
+  const { startCollector } = require('../../src/shared/collector');
+  const { root, options } = fixture(t);
+  const oldShared = process.env.TOKEN_MONITOR_SHARED_DIR;
+  process.env.TOKEN_MONITOR_SHARED_DIR = root;
+  let handle;
+  t.after(async () => {
+    await handle?.stop();
+    if (oldShared === undefined) delete process.env.TOKEN_MONITOR_SHARED_DIR;
+    else process.env.TOKEN_MONITOR_SHARED_DIR = oldShared;
+  });
+  fs.writeFileSync(options.mirrorStatePath, '{broken');
+  const previews = [];
+  const start = () => new Promise(resolve => {
+    handle = startCollector({ ...options, clients: 'claude', allTimeSince: '2020-01-01',
+      historyEnabled: false, projectsEnabled: false, watchEnabled: false, sessionActivityPolling: false,
+      intervalMs: 3600000, runTokscale: async () => ({ claudeSourceExclusions: true, entries: [] }),
+      onUpdate: resolve, onPreview: value => previews.push(value) });
+  });
+  assert.equal((await start()).claudeMirrorArchiveRecovery, true);
+  await handle.whenIdle();
+  await handle.stop();
+  const saved = JSON.parse(fs.readFileSync(path.join(root, 'collector-anchor.json'), 'utf8'));
+  assert.equal(saved.claudeMirrorArchiveRecovery, true);
+  assert.equal((await start()).claudeMirrorArchiveRecovery, true);
+  await handle.whenIdle();
+  await handle.tick('watch', { todayOnly: true });
+  await handle.whenIdle();
+  assert.ok(previews.length > 0);
+  assert.ok(previews.every(value => value.claudeMirrorArchiveRecovery === true));
+  await handle.stop();
 });

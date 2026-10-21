@@ -448,6 +448,7 @@ function applySessionUsageArchive(summary, archive, options = {}) {
       if (!hasSummaryPeriod(next, periodName)) continue;
       const period = targetFor(periodName);
       const key = sessionKey(session.client || entry.client, session.sessionId || entry.sessionId) || archiveKey;
+      if (summary.claudeMirrorArchiveRecovery === true && (session.client || entry.client) === 'claude') continue;
       if (excludedKeys.size && session.client === 'claude'
         && (excludedKeys.has(key.toLowerCase()) || excludedKeys.has(`claude:${String(session.parentSessionId || '').toLowerCase()}`))) continue;
       if (period.sessions[key]) continue;

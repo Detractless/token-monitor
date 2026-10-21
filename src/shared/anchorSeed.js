@@ -1,6 +1,7 @@
 'use strict';
 
 const { collectorAnchorTrust, computePeriodWindows, qoderCnSourcesForClients } = require('./collector');
+const { claudeRemoteMirrors } = require('./claudeRemoteMirrors');
 const { mergePeriods } = require('./usage');
 const { filterReasonixSyntheticSessions } = require('./providers/reasonix/sessionGuard');
 
@@ -40,6 +41,13 @@ function deviceRecordFromAnchor(saved, options = {}) {
   const qoderCnProjectsDir = qoderCnProjectsDirOption === undefined ? qoderCnSources.projectsDir : qoderCnProjectsDirOption;
   const trust = collectorAnchorTrust(saved, { ...options, platform: sourcePlatform || process.platform, clients, allTimeSince, projectsEnabled, qoderCnDbPath, qoderCnProjectsDir, customScanPaths, now });
   if (!trust) return null;
+  if (options.claudeRemoteMirrorsExcluded) {
+    try {
+      const mirrors = claudeRemoteMirrors({ ...options, anchorPersistenceEnabled: false });
+      if ((mirrors.recoveryRequired === true) !== (saved.claudeMirrorArchiveRecovery === true)
+        || JSON.stringify(mirrors.sessionKeys) !== JSON.stringify(saved.excludedSessionKeys || [])) return null;
+    } catch (_) { return null; }
+  }
   // The seed's own rule, and the one place it is stricter than the collector.
   // A capture time the collector cannot trust only costs it a full scan, but
   // here that timestamp becomes the record's updatedAt and the instant the
@@ -78,7 +86,7 @@ function deviceRecordFromAnchor(saved, options = {}) {
     // attribution panel. Leaving them off makes the seed a record that looks
     // subtly unlike the one replacing it.
     projectsEnabled,
-    ...(options.claudeRemoteMirrorsExcluded ? { excludedSessionKeys: saved.excludedSessionKeys || [] } : {}),
+    ...(options.claudeRemoteMirrorsExcluded ? { excludedSessionKeys: saved.excludedSessionKeys || [], claudeMirrorArchiveRecovery: saved.claudeMirrorArchiveRecovery === true } : {}),
     ...(wslStatus ? { wslStatus } : {}),
     // Required, not decorative. Without them aggregateDevices falls back to
     // comparing UTC days, and anywhere ahead of UTC a local day that has not

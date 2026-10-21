@@ -227,7 +227,6 @@ function tokscaleCommand(options = {}) {
     if (['TOKSCALE_CACHED_CLAUDE_DIRS', 'TOKSCALE_EXCLUDED_CLAUDE_DIRS', 'TOKSCALE_CLAUDE_REMOTE_MIRROR_ROOT'].includes(key.toUpperCase())) delete extraDirsEnv[key];
   }
   if (options.claudeRemoteMirrorRoot) extraDirsEnv.TOKSCALE_CLAUDE_REMOTE_MIRROR_ROOT = options.claudeRemoteMirrorRoot;
-  if (options.claudeExcludedDirs?.length) extraDirsEnv.TOKSCALE_EXCLUDED_CLAUDE_DIRS = JSON.stringify(options.claudeExcludedDirs);
   if (options.claudeWslScan?.sources?.length) {
     extraDirsEnv.TOKSCALE_CACHED_CLAUDE_DIRS = JSON.stringify(options.claudeWslScan.sources.flatMap((source) => source.roots));
   }
@@ -555,6 +554,14 @@ function runCursorAwareTokscale(clientFilter, operation, signal) {
   return includesCursor ? withCursorLifecycle(operation, { signal }) : operation();
 }
 
+// Only results synthesized here can bypass binary capability acknowledgements.
+// Empty JSON from an actual subprocess still has to advertise its contract.
+const syntheticTokscaleResults = new WeakSet();
+function syntheticTokscaleResult(value) {
+  syntheticTokscaleResults.add(value);
+  return value;
+}
+
 function runTokscale({
   clients,
   flags,
@@ -564,17 +571,16 @@ function runTokscale({
   onTerminationUnconfirmed,
   customScanPaths,
   claudeWslScan,
-  claudeExcludedDirs,
   claudeRemoteMirrorRoot,
   homeDir,
   workspaces = true
 }) {
   throwIfAborted(signal);
-  const command = tokscaleCommand({ customScanPaths, homeDir, claudeWslScan, claudeExcludedDirs, claudeRemoteMirrorRoot });
+  const command = tokscaleCommand({ customScanPaths, homeDir, claudeWslScan, claudeRemoteMirrorRoot });
   const requested = tokscaleClientFilter(clients);
-  if (!requested) return Promise.resolve({ entries: [] });
+  if (!requested) return Promise.resolve(syntheticTokscaleResult({ entries: [] }));
   const clientFilter = applyKnownCapabilityFilter(requested, command.identity);
-  if (!clientFilter) return Promise.resolve({ entries: [] });
+  if (!clientFilter) return Promise.resolve(syntheticTokscaleResult({ entries: [] }));
   // Asking for the join is what makes the scan resolve and label workspaces, so
   // the Projects opt-out has to be applied here rather than on the way out: a
   // scan that still resolved them and had its answer discarded would keep
@@ -612,7 +618,7 @@ function runTokscale({
   });
   return runCursorAwareTokscale(clientFilter, () => (
     scan(clientFilter).catch((error) => (
-      retryWithKnownCapabilities(error, requested, command, { entries: [] }, (filtered) => (
+      retryWithKnownCapabilities(error, requested, command, syntheticTokscaleResult({ entries: [] }), (filtered) => (
         scan(filtered)
       ), signal, {
         terminationOptions,
@@ -622,13 +628,13 @@ function runTokscale({
   ), signal);
 }
 
-function runTokscaleGraph({ clients, commandTimeoutMs, signal, terminationOptions, onTerminationUnconfirmed, customScanPaths, homeDir, claudeWslScan, claudeExcludedDirs, claudeRemoteMirrorRoot }) {
+function runTokscaleGraph({ clients, commandTimeoutMs, signal, terminationOptions, onTerminationUnconfirmed, customScanPaths, homeDir, claudeWslScan, claudeRemoteMirrorRoot }) {
   throwIfAborted(signal);
-  const command = tokscaleCommand({ customScanPaths, homeDir, claudeWslScan, claudeExcludedDirs, claudeRemoteMirrorRoot });
+  const command = tokscaleCommand({ customScanPaths, homeDir, claudeWslScan, claudeRemoteMirrorRoot });
   const requested = tokscaleClientFilter(clients);
-  if (!requested) return Promise.resolve({ contributions: [] });
+  if (!requested) return Promise.resolve(syntheticTokscaleResult({ contributions: [] }));
   const clientFilter = applyKnownCapabilityFilter(requested, command.identity);
-  if (!clientFilter) return Promise.resolve({ contributions: [] });
+  if (!clientFilter) return Promise.resolve(syntheticTokscaleResult({ contributions: [] }));
   const runArgs = (filter) => ['graph', '--client', filter, '--no-spinner'];
   const subprocessOptions = {
     operation: 'tokscale graph',
@@ -637,7 +643,7 @@ function runTokscaleGraph({ clients, commandTimeoutMs, signal, terminationOption
   };
   return runCursorAwareTokscale(clientFilter, () => (
     spawnTokscaleJson(runArgs(clientFilter), commandTimeoutMs, command, signal, subprocessOptions).catch((error) => (
-      retryWithKnownCapabilities(error, requested, command, { contributions: [] }, (filtered) => (
+      retryWithKnownCapabilities(error, requested, command, syntheticTokscaleResult({ contributions: [] }), (filtered) => (
         spawnTokscaleJson(runArgs(filtered), commandTimeoutMs, command, signal, subprocessOptions)
       ), signal, {
         terminationOptions,
@@ -898,6 +904,12 @@ async function collectUsageOnce(options) {
   // Remote Agents own these sessions; never also collect WSL as this device.
   if (options.claudeRemoteMirrorsExcluded === true) options = { ...options, wslScanEnabled: false };
   const mirrors = claudeRemoteMirrors(options);
+  if (mirrors.recoveryRequired && options.todayOnlyAnchor?.claudeMirrorArchiveRecovery !== true) {
+    try {
+      options.onDiagnosticEvent?.({ subsystem: 'storage', code: 'storage-claude-mirror-state-recovered' });
+      if (typeof options.logger === 'function') options.logger('[collector] Claude mirror selection state needs recovery; live collection continues, Claude archive-only replay is suspended. Restore the selection file from a trusted backup or disable mirror exclusion.');
+    } catch (_) { /* Diagnostics must not block collection. */ }
+  }
   const { clients, allTimeSince, commandTimeoutMs, deviceId, agentVersion = appVersion(), agentRuntime = '' } = options;
   // One snapshot, one instant: capture the clock before any tokscale scan and
   // reuse it for the today-window key and updatedAt, so a collection that
@@ -930,10 +942,10 @@ async function collectUsageOnce(options) {
       ...input,
       ...(!input.flags?.includes('--home') ? { claudeWslScan, claudeRemoteMirrorRoot: mirrors.root } : {})
     });
-    if (claudeWslScan?.sources.length && !input.flags?.includes('--home') && json?.claudeCachedRoots !== true) {
+    if (!syntheticTokscaleResults.has(json) && claudeWslScan?.sources.length && !input.flags?.includes('--home') && json?.claudeCachedRoots !== true) {
       throw new Error('Tokscale does not support shared Claude WSL sources; install the pinned vendor build.');
     }
-    if (mirrors.root && !input.flags?.includes('--home') && json?.claudeSourceExclusions !== true) throw new Error('Tokscale lacks Claude source exclusions');
+    if (!syntheticTokscaleResults.has(json) && mirrors.root && !input.flags?.includes('--home') && json?.claudeSourceExclusions !== true) throw new Error('Tokscale lacks Claude source exclusions');
     applyTokscaleSessionMetadata(json, { resolveProjects: projectsEnabled });
     return json;
   };
@@ -946,8 +958,8 @@ async function collectUsageOnce(options) {
   }));
   const runGraphFn = async (input) => {
     const json = await runGraphScan({ ...input, claudeWslScan, claudeRemoteMirrorRoot: mirrors.root });
-    if (mirrors.root && json?.claudeSourceExclusions !== true) throw new Error('Tokscale graph lacks Claude source exclusions');
-    if (claudeWslScan?.sources.length && json?.claudeCachedRoots !== true) {
+    if (!syntheticTokscaleResults.has(json) && mirrors.root && json?.claudeSourceExclusions !== true) throw new Error('Tokscale graph lacks Claude source exclusions');
+    if (!syntheticTokscaleResults.has(json) && claudeWslScan?.sources.length && json?.claudeCachedRoots !== true) {
       throw new Error('Tokscale graph does not support shared Claude WSL sources.');
     }
     return json;
@@ -1006,6 +1018,7 @@ async function collectUsageOnce(options) {
     && canTargetTodayPartitions(anchor, targetClients)
   );
   if (options.claudeRemoteMirrorsExcluded === true && JSON.stringify(anchor?.excludedSessionKeys || []) !== JSON.stringify(mirrors.sessionKeys)) anchorUsed = false;
+  if ((anchor?.claudeMirrorArchiveRecovery === true) !== (mirrors.recoveryRequired === true)) anchorUsed = false;
   if (jointClaude) {
     // A source-policy transition (including a legacy persisted anchor) must
     // rebuild all periods. A periodic WSL refresh also refreshes old days.
@@ -1034,7 +1047,7 @@ async function collectUsageOnce(options) {
   }
   const emitProgress = (periods) => {
     if (typeof options.onProgress !== 'function') return;
-    try { options.onProgress({ ...periods, excludedSessionKeys: mirrors.sessionKeys, updatedAt: new Date().toISOString() }); } catch (_) {}
+    try { options.onProgress({ ...periods, excludedSessionKeys: mirrors.sessionKeys, claudeMirrorArchiveRecovery: mirrors.recoveryRequired === true, updatedAt: new Date().toISOString() }); } catch (_) {}
   };
   if (normalizedClients) {
     const syncClients = targetRequested ? targetClientsCsv : normalizedClients;
@@ -1337,6 +1350,7 @@ async function collectUsageOnce(options) {
     // Private archive hint: these three report requests finished this tick.
     sessionUsageArchiveFullScan: !anchorUsed,
     excludedSessionKeys: mirrors.sessionKeys,
+    claudeMirrorArchiveRecovery: mirrors.recoveryRequired === true,
     today,
     month,
     allTime
@@ -1385,6 +1399,7 @@ async function collectUsageOnce(options) {
     options.onAnchorComputed({
       fullScan: !anchorUsed,
       excludedSessionKeys: mirrors.sessionKeys,
+      claudeMirrorArchiveRecovery: mirrors.recoveryRequired === true,
       sessionIdentityVersion: sessionIdentitiesComplete ? SESSION_IDENTITY_VERSION : (anchor?.sessionIdentityVersion || 1),
       windowsPeriods,
       todayPartitions,
@@ -2819,6 +2834,7 @@ function startCollector(options) {
           sessionIdentityVersion: saved.sessionIdentityVersion,
           claudeWslSources,
           excludedSessionKeys: saved.excludedSessionKeys || [],
+          claudeMirrorArchiveRecovery: saved.claudeMirrorArchiveRecovery === true,
           today: saved.today,
           month: saved.month,
           allTime: saved.allTime,
@@ -2866,6 +2882,7 @@ function startCollector(options) {
         } : {}),
         wslBundle: wslAnchor,
         excludedSessionKeys: anchor.excludedSessionKeys || [],
+        claudeMirrorArchiveRecovery: anchor.claudeMirrorArchiveRecovery === true,
         wslStatus: wslStatusAnchor,
         ...(anchor.nativeSessions ? { nativeSessions: anchor.nativeSessions } : {}),
         ...(anchor.nativeProjects ? { nativeProjects: anchor.nativeProjects } : {}),
@@ -3032,6 +3049,7 @@ function startCollector(options) {
                 ...(deviceOsInfo.version ? { osVersion: deviceOsInfo.version } : {}),
                 updatedAt: partial.updatedAt,
                 excludedSessionKeys: partial.excludedSessionKeys,
+                claudeMirrorArchiveRecovery: partial.claudeMirrorArchiveRecovery === true,
                 agentVersion, agentRuntime,
                 trackedClients: (clients || '').split(',').filter(Boolean),
                 // Merge the frozen WSL snapshot into today (as month/allTime do
@@ -3112,6 +3130,7 @@ function startCollector(options) {
           sessionIdentityVersion: captured.sessionIdentityVersion,
           claudeWslSources: captured.claudeWslSources,
           excludedSessionKeys: captured.excludedSessionKeys,
+          claudeMirrorArchiveRecovery: captured.claudeMirrorArchiveRecovery === true,
           today: captured.windowsPeriods.today,
           month: captured.windowsPeriods.month,
           allTime: captured.windowsPeriods.allTime,

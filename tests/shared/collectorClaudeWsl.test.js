@@ -290,6 +290,13 @@ test('actual CLI deduplicates periods and History through full, watch, refresh a
     fs.writeFileSync(mirror, event('shared', 100) + event('host', 20) + event('new', 5));
     check(await collectUsageOnce({ ...options, todayOnlyAnchor: anchor, wslAnchor: emptyWslBundle() }), 155);
     check(await collectUsageOnce({ ...options, todayOnlyAnchor: anchor, refreshWsl: true }), 195);
+    const gone = path.join(originalRoot, 'gone.jsonl');
+    fs.writeFileSync(gone, event('deleted-session', 100));
+    check(await collectUsageOnce(options), 295);
+    fs.unlinkSync(gone);
+    check(await collectUsageOnce(options), 195);
+    const prunedAnchor = { dateKey: localTodayKey(), ...captured.windowsPeriods, claudeWslSources: captured.claudeWslSources };
+    check(await collectUsageOnce({ ...options, todayOnlyAnchor: prunedAnchor, wslAnchor: emptyWslBundle() }), 195);
     fs.writeFileSync(original, '{"type":"assistant","message":');
     check(await collectUsageOnce({ ...options, claudeWslSources: [fixtureSource] }), 195);
     active = [];

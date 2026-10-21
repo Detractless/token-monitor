@@ -222,6 +222,7 @@ function buildSyncPayload(summary, {
   delete payload.periodProjectsOmitted;
   delete payload.codexLocalSessionKeys;
   delete payload.excludedSessionKeys;
+  delete payload.claudeMirrorArchiveRecovery;
 
   for (const periodName of ['today', 'month']) {
     const period = payload[periodName];
