@@ -351,7 +351,14 @@ function liveActivityRefreshAt(stats, nowMs = Date.now()) {
 function fitLiveActivityContentState(state, preferences = {}) {
   const size = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
   if (size(state) <= MAX_CONTENT_STATE_BYTES) return state;
-  const quotas = state.quotas || [];
+  // Remove optional metadata globally before considering record omission.
+  // Earlier plan labels must never displace a later explicit account.
+  const quotas = (state.quotas || []).map((quota) => {
+    const value = { ...quota };
+    delete value.planLabel;
+    return value;
+  });
+  if (size({ ...state, quotas }) <= MAX_CONTENT_STATE_BYTES) return { ...state, quotas };
   const result = { ...state, quotas: [] };
   const accounts = new Set(preferences.accountKeys || []);
   const providers = new Set(preferences.providerIDs || []);
@@ -360,15 +367,9 @@ function fitLiveActivityContentState(state, preferences = {}) {
     .sort((left, right) => priority(left.quota) - priority(right.quota) || left.index - right.index);
   const admitted = new Map();
   for (const { quota, index } of ordered) {
-    const variants = [quota, { ...quota, planLabel: undefined }];
-    for (const candidate of variants) {
-      const next = [...admitted.entries(), [index, candidate]]
-        .sort((left, right) => left[0] - right[0]).map((entry) => entry[1]);
-      if (size({ ...result, quotas: next }) <= MAX_CONTENT_STATE_BYTES) {
-        admitted.set(index, candidate);
-        break;
-      }
-    }
+    const next = [...admitted.entries(), [index, quota]]
+      .sort((left, right) => left[0] - right[0]).map((entry) => entry[1]);
+    if (size({ ...result, quotas: next }) <= MAX_CONTENT_STATE_BYTES) admitted.set(index, quota);
   }
   result.quotas = [...admitted.entries()].sort((left, right) => left[0] - right[0]).map((entry) => entry[1]);
   if (size(result) > MAX_CONTENT_STATE_BYTES) {

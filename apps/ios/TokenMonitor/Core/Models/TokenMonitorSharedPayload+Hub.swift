@@ -14,6 +14,9 @@ extension TokenMonitorSharedPayload.Snapshot {
             hidden: hiddenLimitProviders
         )
         let sourceDate = stats.sourceUpdatedAt(now: now)
+        // Aggregate periods belong to the Hub frame's day, not the last device
+        // observation. The Hub can expire today to zero without another ingest.
+        let reportDate = Date.hubTimestamp(from: stats.updatedAt).flatMap { $0 <= now ? $0 : nil }
         return TokenMonitorSharedPayload.Snapshot(
             updatedAt: sourceDate ?? .distantPast,
             today: usage(from: stats.period(.today)),
@@ -30,7 +33,7 @@ extension TokenMonitorSharedPayload.Snapshot {
                     cost: day.cost ?? .nan
                 )
             },
-            todayDate: sourceDate.map { WidgetActivityModel.dayKey(for: $0) },
+            todayDate: reportDate.map { WidgetActivityModel.dayKey(for: $0) } ?? "",
             sourceStale: stats.allSourcesStale,
             agents: agents(from: stats, now: now),
             recent: recent(from: stats)

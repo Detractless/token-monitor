@@ -765,6 +765,9 @@ struct ActivityExpandedBottom: View {
                     ActivityMark(providerID: reading.quota.providerID, size: 12)
                     Text(verbatim: reading.window.label)
                     Text(verbatim: context.percentText(reading.window, reading.value)).fontWeight(.semibold)
+                    if context.sourceIsStale(source) {
+                        ActivityFreshness(context: context, source: source)
+                    }
                     Spacer(minLength: 6)
                     if let reset = context.resetText(reading.window) {
                         Text(verbatim: "Reset \(reset)").foregroundStyle(.secondary)
@@ -772,6 +775,7 @@ struct ActivityExpandedBottom: View {
                 }
                 .font(.caption.monospacedDigit())
                 .lineLimit(1)
+                .opacity(context.sourceIsStale(source) ? 0.5 : 1)
                 .accessibilityElement(children: .combine)
             }
         }
@@ -890,7 +894,13 @@ struct ActivityLockScreenView: View {
                 if quotas.isEmpty { ActivityNoQuota() }
                 ForEach(Array(quotas.enumerated()), id: \.offset) { _, quota in
                     VStack(alignment: .leading, spacing: 1) {
-                        ActivityProviderName(providerID: quota.providerID, font: .footnote.weight(.semibold), markSize: 12)
+                        HStack {
+                            ActivityProviderName(providerID: quota.providerID, font: .footnote.weight(.semibold), markSize: 12)
+                            Spacer(minLength: 4)
+                            if context.isStale || context.quotaIsStale(quota) {
+                                Text("Stale").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                            }
+                        }
                         ForEach(Array(quota.windows.prefix(2).enumerated()), id: \.offset) { _, window in
                             HStack(spacing: 4) {
                                 Text(verbatim: "\(window.label) \(context.percentText(window, source.value))")
@@ -903,6 +913,7 @@ struct ActivityLockScreenView: View {
                             .lineLimit(1)
                         }
                     }
+                    .opacity(context.isStale || context.quotaIsStale(quota) ? 0.5 : 1)
                     .accessibilityElement(children: .combine)
                 }
             }

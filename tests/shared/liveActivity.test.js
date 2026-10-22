@@ -437,3 +437,25 @@ for (const [runtime, api] of [
     }
   });
 }
+
+
+for (const [runtime, api] of [
+  ['Node', require('../../src/shared/liveActivity')],
+  ['Worker', require('../../worker/src/shared/liveActivity')]
+]) {
+  test(`${runtime} optional plan labels never evict another referenced account`, () => {
+    const quotas = Array.from({ length: 5 }, (_, index) => ({
+      providerID: 'codex', accountKey: 'x'.repeat(63) + index,
+      planLabel: '方案'.repeat(60), updatedAt: 800000000.123, stale: false,
+      windows: ['session', 'weekly', 'billing'].map((kind) => ({
+        label: kind, kind, remainingPercent: 20.123, resetsAt: 800010000.123, windowMinutes: 10080
+      }))
+    }));
+    const state = { updatedAt: 800000000.123, usage: { today: { tokens: 100, costUSD: 1 }, month: {} }, quotas, agents: { running: 0, clients: [] } };
+    assert(Buffer.byteLength(JSON.stringify(state)) > api.MAX_CONTENT_STATE_BYTES);
+    const fitted = api.fitLiveActivityContentState(state, { accountKeys: quotas.map((quota) => quota.accountKey) });
+    assert.deepEqual(fitted.quotas.map((quota) => quota.accountKey), quotas.map((quota) => quota.accountKey));
+    assert(fitted.quotas.every((quota) => quota.planLabel === undefined));
+    assert(Buffer.byteLength(JSON.stringify(fitted)) <= api.MAX_CONTENT_STATE_BYTES);
+  });
+}

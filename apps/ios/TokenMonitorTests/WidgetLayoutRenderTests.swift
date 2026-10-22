@@ -233,3 +233,32 @@ struct WidgetLayoutRenderTests {
     }
 
 }
+
+
+extension WidgetLayoutRenderTests {
+    @Test func staleQuotaRemainsVisibleInUsageAndOverviewTemplates() throws {
+        typealias State = TokenMonitorActivityAttributes.ContentState
+        let now = Date.now
+        let state = State(updatedAt: now, usage: .init(today: .init(tokens: 1000, costUSD: 1), month: .init()),
+            quotas: [.init(providerID: "codex", updatedAt: now, stale: false,
+                           windows: [.init(label: "Weekly", kind: "weekly", remainingPercent: 40)]),
+                     .init(providerID: "cursor", updatedAt: now.addingTimeInterval(-1000), stale: true,
+                           windows: [.init(label: "Monthly", kind: "billing", remainingPercent: 5)])], agents: .none)
+        var layout = LiveActivityLayout()
+        layout.expanded = .usage
+        layout.expandedSource = .init(providerID: "cursor")
+        layout.lockScreen = .overview
+        layout.lockScreenSource = .init(providerID: "cursor")
+        let context = ActivityContext(state: state, layout: layout, isStale: false, now: now)
+        let images: [(String, AnyView)] = [
+            ("activity-expanded-usage-stale", AnyView(ActivityExpandedPreview(context: context))),
+            ("activity-lock-overview-stale", AnyView(ActivityLockScreenView(context: context)))
+        ]
+        for (name, view) in images {
+            let renderer = ImageRenderer(content: view.frame(width: 360).environment(\.colorScheme, .dark).background(Color.black))
+            renderer.scale = 3
+            let image = try #require(renderer.uiImage)
+            write(image, name: name)
+        }
+    }
+}

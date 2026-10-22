@@ -28,12 +28,21 @@ nonisolated struct TokenMonitorActivityAttributes: ActivityAttributes {
                 return data.count <= Self.byteBudget
             }
             if fits(self) { return self }
+            // All referenced records come before optional metadata. Greedily
+            // keeping earlier plan labels can otherwise evict a selected source.
+            var withoutPlans = self
+            withoutPlans.quotas = quotas.map { quota in
+                var value = quota
+                value.planLabel = nil
+                return value
+            }
+            if fits(withoutPlans) { return withoutPlans }
             let accounts = Set(accountKeys), providers = Set(providerIDs)
             func priority(_ quota: Quota) -> Int {
                 if let key = quota.accountKey, accounts.contains(key) { return 0 }
                 return providers.contains(quota.providerID) ? 1 : 2
             }
-            let ordered = quotas.enumerated().sorted {
+            let ordered = withoutPlans.quotas.enumerated().sorted {
                 let left = priority($0.element), right = priority($1.element)
                 return left == right ? $0.offset < $1.offset : left < right
             }

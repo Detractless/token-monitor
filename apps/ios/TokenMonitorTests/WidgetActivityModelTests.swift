@@ -273,3 +273,25 @@ extension WidgetActivityModelTests {
         #expect(WidgetActivityModel.streak(entry.days, now: after) == 1)
     }
 }
+
+
+extension WidgetActivityModelTests {
+    @Test func hubRolloverZeroDoesNotReplaceYesterdayHistory() throws {
+        let report = try #require(WidgetActivityModel.localDay(for: "2026-10-22"))
+            .addingTimeInterval(12 * 3600)
+        let device = try #require(WidgetActivityModel.localDay(for: "2026-10-21"))
+            .addingTimeInterval(12 * 3600)
+        let stats = try JSONDecoder().decode(HubStats.self, from: Data("""
+        {"updatedAt":"\(report.formatted(.iso8601))","devices":[{"updatedAt":"\(device.formatted(.iso8601))","stale":true}],"periods":{"today":{"totalTokens":0,"costUsd":0}}}
+        """.utf8))
+        let history = try JSONDecoder().decode(UsageHistory.self, from: Data(#"{"daily":[{"date":"2026-10-21","tokens":100,"cost":1}]}"#.utf8))
+        let snapshot = TokenMonitorSharedPayload.Snapshot.make(stats: stats, history: history, now: report)
+        let entry = TokenMonitorWidgetEntry(date: report, snapshot: snapshot, preferences: .default,
+            content: "activity", period: "today", providerID: nil, showsCost: false, showsUpdateTime: true, ink: .recommended)
+        #expect(snapshot.updatedAt == device)
+        #expect(snapshot.todayDate == "2026-10-22")
+        #expect(entry.days.first { $0.date == "2026-10-21" }?.tokens == 100)
+        #expect(entry.days.first { $0.date == "2026-10-22" }?.tokens == 0)
+        #expect(WidgetActivityModel.last7Total(entry.days, now: report) == 100)
+    }
+}

@@ -263,3 +263,26 @@ extension SourceFreshnessTests {
         #expect(explicit.contains { $0.accountKey == "kiro-3" })
     }
 }
+
+
+extension SourceFreshnessTests {
+    @Test func budgetRemovesOptionalPlansBeforeDroppingAnyReferencedAccount() throws {
+        typealias State = TokenMonitorActivityAttributes.ContentState
+        let date = Date(timeIntervalSince1970: 1_792_670_400.123)
+        let quotas: [State.Quota] = (0..<5).map { index in
+            .init(providerID: "codex", accountKey: String(repeating: "x", count: 63) + String(index),
+                planLabel: String(repeating: "方案", count: 60), updatedAt: date, stale: false,
+                windows: ["session", "weekly", "billing"].map { kind in
+                    .init(label: kind, kind: kind, remainingPercent: 20.123, resetsAt: date.addingTimeInterval(10000), windowMinutes: 10080)
+                })
+        }
+        let state = State(updatedAt: date, usage: .init(today: .init(tokens: 100, costUSD: 1), month: .init()),
+                          quotas: quotas, agents: .none)
+        let keys = quotas.compactMap(\.accountKey)
+        try #require(try JSONEncoder().encode(state).count > State.byteBudget)
+        let fitted = state.fittingBudget(providerIDs: [], accountKeys: keys)
+        #expect(Set(fitted.quotas.compactMap(\.accountKey)) == Set(keys))
+        #expect(fitted.quotas.allSatisfy { $0.planLabel == nil })
+        #expect(try JSONEncoder().encode(fitted).count <= State.byteBudget)
+    }
+}
