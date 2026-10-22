@@ -4,27 +4,25 @@
 
 <!-- app-update-notes:en:start -->
 ### Added
-- **Goose usage:** Supports local cumulative usage tracking on macOS and Linux. Session usage is attributed to its creation date. (#1050)
-- **WorkBuddy accounts:** Adds official browser sign-in for China and international accounts, with multiple-account management independent of encrypted desktop credentials. (#1020)
-- **WorkBuddy quota totals:** Adds an optional total for accounts with current, compatible quotas. Each account retains its own quota. (#1020)
-- **Notion AI allowances:** Adds support for rolling and monthly allowances in Business or Enterprise workspaces, configured with a session cookie and Workspace ID. (#1044)
-- **Pi session details:** Supports viewing prompts, turns, per-turn token usage and tool records. (#1009)
+- **New API account spend:** Adds Today, rolling-week and Month totals where available, with Today and Month in the account summary and more periods in the tooltip. (#1139)
+- **Node Hub save interval:** Adds optional batched saves to reduce disk writes. Abrupt termination can lose unsaved updates. (#1029)
 
 ### Improved
-- **Session details:** Updates open details when session usage changes, preserving expanded entries and reading position. (#1009)
+- **Settings and account refreshes:** Avoids rescanning usage when refreshing quotas after settings or account changes. (#1106)
 
 ### Fixed
-- **macOS tray popover:** Fixes the popover reopening after a click on the menu-bar icon closes it. (#1037)
-- **Codex Dots usage:** Fixes missing local usage when the desktop app launches its executor with configuration overrides. (#1047)
-- **CodeBuddy sub-agent details:** Fixes sub-agent sessions appearing to have no conversation records. (#1042)
+- **Live model rates:** Keeps concurrent models visible when their usage updates arrive at different times. (#1016)
+- **Cline accounts:** Keeps distinct accounts and API keys separate across synced devices, even when their email addresses match. (#1096)
+- **Cline API key:** Uses the key saved in Settings when fetching quotas. (#1147)
+- **Cursor quotas:** Failed plan lookups no longer show a false 100% remaining allowance. (#1145)
 <!-- app-update-notes:en:end -->
 ## Download
 
-- **macOS Apple Silicon** — [Token-Monitor-0.71.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.71.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-x64.dmg)
-- **Windows Installer** — [Token-Monitor-Setup-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-Setup-0.71.0.exe) (recommended)
-- **Windows Portable** — [Token-Monitor-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.exe) (no install required)
-- **Linux x64** — [Token-Monitor-0.71.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.77.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.77.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-x64.dmg)
+- **Windows Installer** — [Token-Monitor-Setup-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-Setup-0.77.0.exe) (recommended)
+- **Windows Portable** — [Token-Monitor-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.exe) (no install required)
+- **Linux x64** — [Token-Monitor-0.77.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.AppImage)
 
 <details>
 <summary><strong>First launch and other notes</strong></summary>
@@ -38,8 +36,8 @@
 **Linux:** mark the AppImage executable, then run it:
 
 ```bash
-chmod +x "Token Monitor"*.AppImage
-./"Token Monitor"*.AppImage
+chmod +x Token-Monitor-*.AppImage
+./Token-Monitor-*.AppImage
 ```
 
 ### Other notes
@@ -60,28 +58,26 @@ Tokscale is bundled with this app and updated through Token Monitor releases. Se
 
 <!-- app-update-notes:zh:start -->
 ### 新增
-- **Goose 用量：** 支持 macOS 和 Linux 上的本地累计用量追踪，会话用量归入创建日期。 （#1050）
-- **WorkBuddy 账号：** 新增国内及国际账号的官方浏览器登录与多账号管理，无需依赖桌面端的加密凭据。 （#1020）
-- **WorkBuddy 额度合计：** 可选择合计最新且兼容的账号额度，各账号的额度仍分开使用。 （#1020）
-- **Notion AI 额度：** 支持 Business 或 Enterprise 工作区的滚动及月度额度，需配置会话 Cookie 和工作区 ID。 （#1044）
-- **Pi 会话详情：** 支持查看提问、回合、每回合 Token 用量和工具记录。 （#1009）
+- **New API 账号消费：** 支持查看可用的今日、最近七天和本月消费，账号摘要显示今日与本月，悬浮提示提供更多时段明细。 （#1139）
+- **Node Hub 保存间隔：** 支持按设定间隔批量保存，减少磁盘写入；异常终止可能丢失尚未保存的更新。 （#1029）
 
 ### 改进
-- **会话详情：** 用量变化时更新已打开的详情，保留展开内容和阅读位置。 （#1009）
+- **设置与账号刷新：** 修改设置或账号后刷新额度时，不再重复扫描用量。 （#1106）
 
 ### 修复
-- **macOS 托盘弹窗：** 修复点击菜单栏图标关闭后又重新打开的问题。 （#1037）
-- **Codex Dots 用量：** 修复桌面端带配置参数启动时本地用量缺失的问题。 （#1047）
-- **CodeBuddy 子代理详情：** 修复子代理会话提示没有对话记录的问题。 （#1042）
+- **模型实时速率：** 多个模型的用量先后更新时，保留各自的实时速率显示。 （#1016）
+- **Cline 账号：** 跨设备同步时，不同账号和 API Key 不再因邮箱相同而被合并。 （#1096）
+- **Cline API Key：** 查询额度时正确使用设置中保存的密钥。 （#1147）
+- **Cursor 额度：** 套餐查询失败时，不再错误显示剩余额度为 100%。 （#1145）
 <!-- app-update-notes:zh:end -->
 
 ## 下载
 
-- **macOS Apple Silicon** — [Token-Monitor-0.71.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.71.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-x64.dmg)
-- **Windows 安装版** — [Token-Monitor-Setup-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-Setup-0.71.0.exe)（推荐）
-- **Windows 便携版** — [Token-Monitor-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.exe)（免安装）
-- **Linux x64** — [Token-Monitor-0.71.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.77.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.77.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-x64.dmg)
+- **Windows 安装版** — [Token-Monitor-Setup-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-Setup-0.77.0.exe)（推荐）
+- **Windows 便携版** — [Token-Monitor-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.exe)（免安装）
+- **Linux x64** — [Token-Monitor-0.77.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.AppImage)
 
 <details>
 <summary><strong>首次启动与其他说明</strong></summary>
@@ -95,8 +91,8 @@ Tokscale is bundled with this app and updated through Token Monitor releases. Se
 **Linux：** 先给 AppImage 执行权限，然后运行：
 
 ```bash
-chmod +x "Token Monitor"*.AppImage
-./"Token Monitor"*.AppImage
+chmod +x Token-Monitor-*.AppImage
+./Token-Monitor-*.AppImage
 ```
 
 ### 其他说明
@@ -112,7 +108,7 @@ Tokscale 已随应用内置，并通过 Token Monitor 发布版本更新。你�
 ---
 
 <details>
-<summary><strong>Full Changelog:</strong> <a href="https://github.com/Javis603/token-monitor/compare/v0.70.0...v0.71.0">v0.70.0...v0.71.0</a></summary>
+<summary><strong>Full Changelog:</strong> <a href="https://github.com/Javis603/token-monitor/compare/v0.76.0...v0.77.0">v0.76.0...v0.77.0</a></summary>
 
 <!-- github-generated-release-notes -->
 
@@ -130,28 +126,26 @@ Tokscale 已随应用内置，并通过 Token Monitor 发布版本更新。你�
 
 <!-- app-update-notes:zh-TW:start -->
 ### 新增
-- **Goose 用量：** 支援 macOS 與 Linux 上的本機累計用量追蹤，會話用量歸入建立日期。 （#1050）
-- **WorkBuddy 帳號：** 新增中國及國際帳號的官方瀏覽器登入與多帳號管理，無需依賴桌面端的加密憑證。 （#1020）
-- **WorkBuddy 額度合計：** 可選擇合計最新且相容的帳號額度，各帳號的額度仍分開使用。 （#1020）
-- **Notion AI 額度：** 支援 Business 或 Enterprise 工作區的滾動及月度額度，需設定會話 Cookie 與工作區 ID。 （#1044）
-- **Pi 會話詳情：** 支援查看提問、回合、每回合 Token 用量與工具記錄。 （#1009）
+- **New API 帳號消費：** 支援查看可用的今日、最近七天與本月消費，帳號摘要顯示今日與本月，浮動提示提供更多時段明細。 （#1139）
+- **Node Hub 儲存間隔：** 支援按設定間隔批次儲存，減少磁碟寫入；異常終止可能遺失尚未儲存的更新。 （#1029）
 
 ### 改進
-- **會話詳情：** 用量變化時更新已開啟的詳情，保留展開內容與閱讀位置。 （#1009）
+- **設定與帳號重新整理：** 修改設定或帳號後重新整理額度時，不再重複掃描用量。 （#1106）
 
 ### 修復
-- **macOS 托盤彈出視窗：** 修復點擊選單列圖示關閉後又重新開啟的問題。 （#1037）
-- **Codex Dots 用量：** 修復桌面端帶設定參數啟動時本機用量缺失的問題。 （#1047）
-- **CodeBuddy 子代理詳情：** 修復子代理會話提示沒有對話記錄的問題。 （#1042）
+- **模型即時速率：** 多個模型的用量先後更新時，保留各自的即時速率顯示。 （#1016）
+- **Cline 帳號：** 跨裝置同步時，不同帳號與 API Key 不再因電子郵件相同而被合併。 （#1096）
+- **Cline API Key：** 查詢額度時正確使用設定中儲存的金鑰。 （#1147）
+- **Cursor 額度：** 方案查詢失敗時，不再錯誤顯示剩餘額度為 100%。 （#1145）
 <!-- app-update-notes:zh-TW:end -->
 
 ## 下載
 
-- **macOS Apple Silicon** — [Token-Monitor-0.71.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.71.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-x64.dmg)
-- **Windows 安裝版** — [Token-Monitor-Setup-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-Setup-0.71.0.exe)（推薦）
-- **Windows 便攜版** — [Token-Monitor-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.exe)（免安裝）
-- **Linux x64** — [Token-Monitor-0.71.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.77.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.77.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-x64.dmg)
+- **Windows 安裝版** — [Token-Monitor-Setup-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-Setup-0.77.0.exe)（推薦）
+- **Windows 便攜版** — [Token-Monitor-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.exe)（免安裝）
+- **Linux x64** — [Token-Monitor-0.77.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.AppImage)
 
 </details>
 
@@ -164,28 +158,26 @@ Tokscale 已随应用内置，并通过 Token Monitor 发布版本更新。你�
 
 <!-- app-update-notes:ko:start -->
 ### 추가
-- **Goose 사용량:** macOS와 Linux에서 로컬 누적 사용량을 추적합니다. 세션 사용량은 세션을 생성한 날짜에 반영됩니다. (#1050)
-- **WorkBuddy 계정:** 중국 및 글로벌 계정의 공식 브라우저 로그인과 여러 계정 관리를 지원하며, 데스크톱 앱의 암호화된 인증 정보에 의존하지 않습니다. (#1020)
-- **WorkBuddy 할당량 합계:** 최신 상태이며 호환되는 계정의 할당량을 합산해 표시하는 옵션을 추가했습니다. 각 계정의 할당량은 별도로 사용합니다. (#1020)
-- **Notion AI 한도:** Business 또는 Enterprise 워크스페이스의 롤링 및 월간 한도를 지원합니다. 세션 쿠키와 워크스페이스 ID를 직접 설정해야 합니다. (#1044)
-- **Pi 세션 상세:** 질문, 턴, 턴별 토큰 사용량과 도구 기록을 확인할 수 있습니다. (#1009)
+- **New API 계정 지출:** 조회 가능한 오늘, 최근 7일, 이번 달 지출을 표시합니다. 계정 요약에는 오늘과 이번 달 지출을, 툴팁에는 더 많은 기간의 내역을 보여줍니다. (#1139)
+- **Node Hub 저장 간격:** 지정한 간격으로 일괄 저장하여 디스크 쓰기를 줄일 수 있습니다. 비정상 종료 시 저장하지 않은 업데이트가 유실될 수 있습니다. (#1029)
 
 ### 개선
-- **세션 상세:** 사용량이 바뀌면 열린 상세 화면을 갱신하면서 펼친 항목과 읽던 위치를 유지합니다. (#1009)
+- **설정 및 계정 새로고침:** 설정이나 계정 변경 후 한도를 새로고칠 때 사용량을 다시 스캔하지 않아 불필요한 처리를 줄였습니다. (#1106)
 
 ### 수정
-- **macOS 트레이 팝오버:** 메뉴 막대 아이콘을 눌러 닫은 팝오버가 다시 열리는 문제를 수정했습니다. (#1037)
-- **Codex Dots 사용량:** 데스크톱 앱이 설정 옵션을 지정해 실행할 때 로컬 사용량이 누락되는 문제를 수정했습니다. (#1047)
-- **CodeBuddy 하위 에이전트 상세:** 하위 에이전트 세션에 대화 기록이 없다고 표시되는 문제를 수정했습니다. (#1042)
+- **모델별 실시간 속도:** 여러 모델의 사용량이 서로 다른 시점에 갱신되어도 각 모델의 실시간 속도를 유지해 표시합니다. (#1016)
+- **Cline 계정:** 기기 간 동기화 시 이메일 주소가 같아도 서로 다른 계정과 API 키를 별도로 표시합니다. (#1096)
+- **Cline API 키:** 한도를 조회할 때 설정에 저장한 키를 올바르게 사용합니다. (#1147)
+- **Cursor 한도:** 요금제 조회에 실패했을 때 남은 한도가 100%로 잘못 표시되던 문제를 수정했습니다. (#1145)
 <!-- app-update-notes:ko:end -->
 
 ## 다운로드
 
-- **macOS Apple Silicon** — [Token-Monitor-0.71.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.71.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-x64.dmg)
-- **Windows 설치 버전** — [Token-Monitor-Setup-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-Setup-0.71.0.exe) (권장)
-- **Windows 포터블 버전** — [Token-Monitor-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.exe) (설치 필요 없음)
-- **Linux x64** — [Token-Monitor-0.71.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.77.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.77.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-x64.dmg)
+- **Windows 설치 버전** — [Token-Monitor-Setup-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-Setup-0.77.0.exe) (권장)
+- **Windows 포터블 버전** — [Token-Monitor-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.exe) (설치 필요 없음)
+- **Linux x64** — [Token-Monitor-0.77.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.AppImage)
 
 </details>
 
@@ -198,28 +190,26 @@ Tokscale 已随应用内置，并通过 Token Monitor 发布版本更新。你�
 
 <!-- app-update-notes:ja:start -->
 ### 追加
-- **Goose の使用量:** macOS と Linux でローカルの累積使用量を追跡できます。セッションの使用量は作成日に計上されます。 (#1050)
-- **WorkBuddy アカウント:** 中国版・国際版の公式ブラウザログインと複数アカウントの管理に対応しました。デスクトップアプリの暗号化された認証情報に依存しません。 (#1020)
-- **WorkBuddy の利用枠合計:** 最新かつ互換性のあるアカウントの利用枠を合計表示するオプションを追加しました。利用枠はアカウントごとに個別に使われます。 (#1020)
-- **Notion AI の利用枠:** Business または Enterprise ワークスペースのローリング・月間利用枠に対応しました。セッション Cookie とワークスペース ID の設定が必要です。 (#1044)
-- **Pi のセッション詳細:** 質問、ターン、ターンごとのトークン使用量とツール記録を確認できます。 (#1009)
+- **New API アカウントの支出:** 取得可能な本日・直近7日間・今月の支出を表示します。アカウントの概要には本日と今月の金額を、ツールチップにはほかの期間の内訳を表示します。 (#1139)
+- **Node Hub の保存間隔:** 指定した間隔でまとめて保存し、ディスクへの書き込みを減らせます。異常終了すると、未保存の更新が失われる場合があります。 (#1029)
 
 ### 改善
-- **セッション詳細:** 使用量の変化に合わせて開いている詳細を更新し、展開した項目と閲覧位置を維持します。 (#1009)
+- **設定とアカウントの更新:** 設定やアカウントの変更後に上限を更新する際、使用量の再スキャンを省きます。 (#1106)
 
 ### 修正
-- **macOS のトレイポップオーバー:** メニューバーのアイコンで閉じた後に再び開く問題を修正しました。 (#1037)
-- **Codex Dots の使用量:** デスクトップアプリが設定オプション付きで起動した際にローカル使用量が欠落する問題を修正しました。 (#1047)
-- **CodeBuddy のサブエージェント詳細:** サブエージェントのセッションで会話記録がないと表示される問題を修正しました。 (#1042)
+- **モデル別のリアルタイム速度:** 複数モデルの使用量が異なるタイミングで更新されても、各モデルの速度表示を維持します。 (#1016)
+- **Cline アカウント:** デバイス間の同期で、メールアドレスが同じでも異なるアカウントと API キーを別々に表示します。 (#1096)
+- **Cline API キー:** 上限の取得時に、設定に保存したキーを正しく使用します。 (#1147)
+- **Cursor の上限:** プランの取得に失敗した際、残りの利用枠が誤って100%と表示される問題を修正しました。 (#1145)
 <!-- app-update-notes:ja:end -->
 
 ## ダウンロード
 
-- **macOS Apple Silicon** — [Token-Monitor-0.71.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.71.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0-x64.dmg)
-- **Windows インストーラー** — [Token-Monitor-Setup-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-Setup-0.71.0.exe)（推奨）
-- **Windows ポータブル版** — [Token-Monitor-0.71.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.exe)（インストール不要）
-- **Linux x64** — [Token-Monitor-0.71.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.71.0/Token-Monitor-0.71.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.77.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.77.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0-x64.dmg)
+- **Windows インストーラー** — [Token-Monitor-Setup-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-Setup-0.77.0.exe)（推奨）
+- **Windows ポータブル版** — [Token-Monitor-0.77.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.exe)（インストール不要）
+- **Linux x64** — [Token-Monitor-0.77.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.77.0/Token-Monitor-0.77.0.AppImage)
 
 </details>
 

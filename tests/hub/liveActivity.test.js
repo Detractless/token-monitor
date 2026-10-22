@@ -242,3 +242,29 @@ test('Hub reloads private registrations and retries a failed target after the ne
     fs.rmSync(dataFile, { force: true });
   }
 });
+
+
+test('Hub restart restores Live Activity pushes and flushes batched usage on stop', async () => {
+  const dataFile = tempDataFile();
+  const pushes = [];
+  const hub = createHub({ port: 0, host: '127.0.0.1', dataFile, persistIntervalMs: 60_000, apns: {
+    enabled: true, minIntervalMs: 0,
+    async send(token, state) { pushes.push({ token, state }); return { sent: true }; }
+  } });
+  try {
+    await hub.start();
+    hub.registerLiveActivity(registration('activity'));
+    await waitFor(() => pushes.length === 1);
+    hub.ingest({ deviceId: 'device', periods: { today: { totalTokens: 100 } } });
+    await hub.stop();
+    assert.equal(JSON.parse(fs.readFileSync(dataFile)).devices.device.periods.today.totalTokens, 100);
+    const stoppedPushCount = pushes.length;
+    await hub.start();
+    hub.ingest({ deviceId: 'device', periods: { today: { totalTokens: 200 } } });
+    await waitFor(() => pushes.length > stoppedPushCount);
+    assert.equal(pushes.at(-1).state.usage.today.tokens, 200);
+  } finally {
+    await hub.stop();
+    fs.rmSync(dataFile, { force: true });
+  }
+});
