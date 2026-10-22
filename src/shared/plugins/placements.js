@@ -20,6 +20,34 @@
     return Array.isArray(value) ? NOTCH_BUILTIN_PAGES.filter(page => value.includes(page)) : [...NOTCH_BUILTIN_PAGES];
   }
 
+  // Ordering is separate from visibility so hiding/disabling a page retains its slot.
+  function normalizeNotchPageOrder(value) {
+    const out = [], seen = new Set();
+    for (const raw of Array.isArray(value) ? value : []) {
+      if (typeof raw !== 'string') continue;
+      const id = raw.trim().toLowerCase();
+      if ((!NOTCH_BUILTIN_PAGES.includes(id) && !(id.startsWith(HOME_PREFIX) && isRef(id.slice(HOME_PREFIX.length)))) || seen.has(id)) continue;
+      out.push(id); seen.add(id);
+      if (out.length >= MAX_NOTCH_PAGES + NOTCH_BUILTIN_PAGES.length) break;
+    }
+    return out;
+  }
+
+  function orderNotchPages(available, value) {
+    const ids = new Set(available);
+    const preferred = normalizeNotchPageOrder(value).filter(id => ids.has(id));
+    const seen = new Set(preferred);
+    return [...preferred, ...available.filter(id => !seen.has(id))];
+  }
+
+  function mergeNotchPageOrder(previous, displayed) {
+    const desired = normalizeNotchPageOrder(displayed), present = new Set(desired);
+    let spare = MAX_NOTCH_PAGES + NOTCH_BUILTIN_PAGES.length - desired.length;
+    const retained = normalizeNotchPageOrder(previous).filter(id => present.has(id) || spare-- > 0);
+    let index = 0;
+    return [...retained.map(id => present.has(id) ? desired[index++] : id), ...desired.slice(index)];
+  }
+
   function isRef(value) {
     return typeof value === 'string' && REF_RE.test(value);
   }
@@ -70,6 +98,9 @@
     MAX_NOTCH_PAGES,
     NOTCH_BUILTIN_PAGES,
     normalizeNotchBuiltinPages,
+    normalizeNotchPageOrder,
+    orderNotchPages,
+    mergeNotchPageOrder,
     homeToken,
     isHomeToken,
     isRef,
