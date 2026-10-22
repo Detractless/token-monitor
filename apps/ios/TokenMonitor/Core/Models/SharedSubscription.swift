@@ -40,8 +40,12 @@ nonisolated struct SharedSubscription: Decodable, Identifiable, Sendable {
               Self.dayString(date, calendar: calendar) == day else { return nil }
         return day
     }
-    static func dayString(_ date: Date, calendar: Calendar = .current) -> String {
-        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+    static func dayString(_ date: Date, calendar: Calendar? = nil) -> String {
+        // Billing keys are Gregorian calendar days in the user's current zone.
+        // A Buddhist/Japanese system calendar must never change the wire year.
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = calendar?.timeZone ?? .current
+        let parts = gregorian.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
     }
     private func anchoredDate(months offset: Int) -> String? {

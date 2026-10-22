@@ -39,9 +39,10 @@ struct MainAlignmentTests {
         #expect(balance.currency == "CNY")
     }
 
-    private func snapshot(_ a: (Int, Int), _ b: (Int, Int), models: Bool = true) throws -> HubStats {
+    private func snapshot(_ a: (Int, Int), _ b: (Int, Int), models: Bool = true, unknownDevice: Bool = false) throws -> HubStats {
         let attribution = models ? #", "modelThroughput":{"a":{"timedTokens":\#(a.0),"timedOutputTokens":\#(a.0),"timedDurationMs":\#(a.1)},"b":{"timedTokens":\#(b.0),"timedOutputTokens":\#(b.0),"timedDurationMs":\#(b.1)}}"# : ""
-        return try decode(HubStats.self, #"{"devices":[{"deviceId":"mac","displayName":"Mac","stale":false,"periods":{"today":{"timedTokens":\#(a.0+b.0),"timedOutputTokens":\#(a.0+b.0),"timedDurationMs":\#(a.1+b.1)\#(attribution)}}}]}"#)
+        let unknown = unknownDevice ? #",{"deviceId":"legacy","stale":false,"periods":{"today":{}}}"# : ""
+        return try decode(HubStats.self, #"{"devices":[{"deviceId":"mac","displayName":"Mac","stale":false,"periods":{"today":{"timedTokens":\#(a.0+b.0),"timedOutputTokens":\#(a.0+b.0),"timedDurationMs":\#(a.1+b.1)\#(attribution)}}}\#(unknown)]}"#)
     }
 
     @Test func concurrentModelRatesRetainSamplesAndWeightDeviceHeadline() throws {
@@ -56,9 +57,46 @@ struct MainAlignmentTests {
         #expect(reading.devices.first?.models.map(\.tokensPerSecond) == [100, 150])
         #expect(tracker.reading(at: start.addingTimeInterval(9.5))?.devices.first?.models.map(\.id) == ["b"])
         #expect(tracker.reading(at: start.addingTimeInterval(11))?.isIdle == true)
+        #expect(tracker.reading(at: start.addingTimeInterval(11))?.tokensPerSecond == 150)
         #expect(tracker.reading(at: start.addingTimeInterval(183)) == nil)
         tracker.observe(try snapshot((0, 0), (0, 0)), at: start.addingTimeInterval(184))
         #expect(tracker.reading(at: start.addingTimeInterval(184)) == nil)
+    }
+
+    @Test func canonicalModelIdentityPrecedesLatestSampleSelection() throws {
+        var tracker = LiveTokenRateTracker()
+        let aliases = ModelAliasSettings(modelAliases: ["a": "Shared", "b": "Shared"])
+        let start = Date(timeIntervalSince1970: 1_000)
+        tracker.observe(try snapshot((100, 1_000), (100, 1_000)), aliases: aliases, at: start)
+        tracker.observe(try snapshot((200, 2_000), (100, 1_000)), aliases: aliases, at: start.addingTimeInterval(1))
+        tracker.observe(try snapshot((200, 2_000), (400, 3_000)), aliases: aliases, at: start.addingTimeInterval(2))
+        let reading = try #require(tracker.reading(at: start.addingTimeInterval(2)))
+        #expect(reading.tokensPerSecond == 150)
+        #expect(reading.devices.first?.models.map(\.id) == ["Shared"])
+        #expect(reading.devices.first?.models.first?.tokensPerSecond == 150)
+    }
+
+    @Test func unknownDeviceDoesNotEraseAnotherDevicesIdleReading() throws {
+        var tracker = LiveTokenRateTracker()
+        let start = Date(timeIntervalSince1970: 1_000)
+        tracker.observe(try snapshot((100, 1_000), (100, 1_000), unknownDevice: true), at: start)
+        tracker.observe(try snapshot((200, 2_000), (100, 1_000), unknownDevice: true), at: start.addingTimeInterval(1))
+        #expect(tracker.reading(at: start.addingTimeInterval(10))?.tokensPerSecond == 100)
+        tracker.observe(try snapshot((200, 2_000), (100, 1_000), unknownDevice: true), at: start.addingTimeInterval(11))
+        #expect(tracker.reading(at: start.addingTimeInterval(11))?.tokensPerSecond == 100)
+        #expect(tracker.reading(at: start.addingTimeInterval(11))?.isIdle == true)
+    }
+
+    @Test func billingKeysUseGregorianFieldsInLocalZoneForEverySystemCalendar() throws {
+        let date = try #require(Date.hubTimestamp(from: "2026-10-22T00:30:00Z"))
+        for identifier in [Calendar.Identifier.gregorian, .buddhist, .japanese, .islamic] {
+            var calendar = Calendar(identifier: identifier)
+            calendar.timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
+            let today = SharedSubscription.dayString(date, calendar: calendar)
+            #expect(today == "2026-10-21")
+            let record = try decode(SharedSubscription.self, #"{"id":"topup","provider":"codex","kind":"topup","currency":"USD","topUps":[{"id":"1","date":"2026-10-01","amountMinor":5000}]}"#)
+            #expect(record.monthlyAmountUSD(today: today) == 50)
+        }
     }
 
     @Test func unavailableOrConflictingModelAttributionFallsBackWithoutDoubleCounting() throws {

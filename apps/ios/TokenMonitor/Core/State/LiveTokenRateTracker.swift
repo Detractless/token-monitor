@@ -50,17 +50,31 @@ nonisolated struct LiveTokenRateTracker {
         var models: [String: Sample] = [:]
         var remainder: Sample?
 
-        mutating func observe(_ period: UsagePeriod, at now: Date) -> Bool {
+        mutating func observe(_ period: UsagePeriod, resolver: [String: String], at now: Date) -> Bool {
             let current = period.capabilities?.throughput == false ? nil : Counters(
                 tokens: period.timedTokens ?? 0, output: period.timedOutputTokens ?? .nan,
                 duration: period.timedDurationMs ?? .nan)
-            let modelCounters = period.modelThroughput?.compactMapValues(\.counters)
+            let modelCounters = period.modelThroughput.map { throughput in
+                throughput.reduce(into: [String: Counters]()) { result, entry in
+                    guard let counters = entry.value.counters else { return }
+                    let id = resolver[entry.key] ?? entry.key
+                    let prior = result[id] ?? .zero
+                    result[id] = Counters(tokens: prior.tokens + counters.tokens,
+                        output: prior.output + counters.output, duration: prior.duration + counters.duration)
+                }
+            }
             let previous = baseline, previousModels = modelBaseline
             baseline = current; modelBaseline = modelCounters
-            guard let current else { models = [:]; remainder = nil; return true }
+            guard let current else {
+                let invalidated = !models.isEmpty || remainder != nil
+                models = [:]; remainder = nil
+                return invalidated
+            }
             guard let previous else { return false }
             guard let delta = current.subtracting(previous) else {
-                models = [:]; remainder = nil; return true
+                let invalidated = !models.isEmpty || remainder != nil
+                models = [:]; remainder = nil
+                return invalidated
             }
             guard delta.duration > 0 else { return false }
             var next: [String: Sample] = [:]
@@ -105,23 +119,33 @@ nonisolated struct LiveTokenRateTracker {
 
     mutating func reset() { devices = [:]; lastDisplay = nil }
 
-    mutating func observe(_ stats: HubStats, at now: Date) {
+    mutating func observe(_ stats: HubStats, aliases: ModelAliasSettings = .init(), at now: Date) {
         let entries: [(String, String, UsagePeriod)]
         if let sources = stats.devices, !sources.isEmpty {
             entries = sources.filter { $0.stale != true }.map { ($0.id, $0.displayName, $0.period(.today)) }
         } else { entries = [("aggregate", "", stats.period(.today))] }
+        let periods = Array((stats.periods ?? [:]).values)
+            + (stats.devices ?? []).flatMap { Array(($0.periods ?? [:]).values) }
+        let ids = periods.flatMap { period in
+            Array((period.models ?? [:]).keys) + Array((period.modelThroughput ?? [:]).keys)
+                + (period.sessions ?? [:]).values.flatMap { Array(($0.models ?? [:]).keys) }
+        }
+        let resolver = aliases.resolver(modelIDs: ids)
         devices = devices.filter { key, _ in entries.contains { $0.0 == key } }
         for (id, name, period) in entries {
             var device = devices[id] ?? Device(name: name)
             device.name = name
-            if device.observe(period, at: now) { lastDisplay = nil }
+            if device.observe(period, resolver: resolver, at: now) { lastDisplay = nil }
             devices[id] = device
         }
         if let live = liveReading(at: now) { lastDisplay = live }
     }
 
-    func reading(at now: Date) -> Reading? {
-        if let live = liveReading(at: now) { return live.reading }
+    mutating func reading(at now: Date) -> Reading? {
+        if let live = liveReading(at: now) {
+            lastDisplay = live
+            return live.reading
+        }
         guard let lastDisplay, (0..<180).contains(now.timeIntervalSince(lastDisplay.at)) else { return nil }
         return Reading(tokensPerSecond: lastDisplay.reading.tokensPerSecond, isIdle: true,
                        devices: [], deviceCount: 0)

@@ -109,22 +109,7 @@ final class TokenMonitorStore {
     }
 
     func liveModelOutputRate(at date: Date = .now) -> LiveTokenRateTracker.Reading? {
-        guard let reading = liveOutputRate(at: date) else { return nil }
-        let ids = reading.devices.flatMap { $0.models.map(\.id) }
-        let allIDs = ids + (stats?.periods ?? [:]).values.flatMap { Array(($0.models ?? [:]).keys) }
-        let resolver = modelAliases.resolver(modelIDs: allIDs)
-        let devices = reading.devices.map { device in
-            let folded = Dictionary(grouping: device.models) { resolver[$0.id] ?? $0.id }
-            return LiveTokenRateTracker.DeviceReading(id: device.id, name: device.name,
-                models: folded.map { id, values in
-                    let output = values.reduce(0) { $0 + $1.timedOutput }
-                    let duration = values.reduce(0) { $0 + $1.timedDuration }
-                    return .init(id: id, tokensPerSecond: duration > 0 ? min(1e12, output / duration * 1_000) : 0,
-                                 timedOutput: output, timedDuration: duration)
-                }.sorted { $0.id < $1.id })
-        }
-        return .init(tokensPerSecond: reading.tokensPerSecond, isIdle: reading.isIdle,
-                     devices: devices, deviceCount: reading.deviceCount)
+        liveOutputRate(at: date)
     }
 
     private func projectModelNames() {
@@ -167,7 +152,18 @@ final class TokenMonitorStore {
                 self.aliasTask = nil
                 self.aliasRequestID = nil
                 if let revision, let document, document.revision < revision { return }
-                self.modelAliases = document?.value ?? ModelAliasSettings()
+                let settings = document?.value ?? ModelAliasSettings()
+                let changed = self.modelAliases.modelAliases != settings.modelAliases
+                    || self.modelAliases.modelAliasGrouping != settings.modelAliasGrouping
+                self.modelAliases = settings
+                if changed {
+                    // Aliases change counter identity, so establish a fresh baseline
+                    // from the latest raw snapshot before accepting more deltas.
+                    self.liveRateTracker.reset()
+                    if let latest = self.stats {
+                        self.liveRateTracker.observe(latest, aliases: settings, at: .now)
+                    }
+                }
                 self.aliasRevision = document?.revision ?? revision
                 self.aliasesLoaded = true
                 self.projectModelNames()
@@ -287,7 +283,7 @@ final class TokenMonitorStore {
         guard isCurrent(generation) else { return }
         publication += 1
         let publication = publication
-        liveRateTracker.observe(incoming, at: .now)
+        liveRateTracker.observe(incoming, aliases: modelAliases, at: .now)
         stats = incoming
         projectModelNames()
         syncModelAliases(configuration: configuration, generation: generation)
