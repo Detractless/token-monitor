@@ -7,16 +7,30 @@ npm run verify
 env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron scripts/test-plugin-settings-ui.cjs
 env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron scripts/test-plugin-motion-ui.cjs
 env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron scripts/test-plugin-corrections-ui.cjs
+env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron scripts/test-notch-page-order-ui.cjs
 env -u ELECTRON_RUN_AS_NODE npm run verify:plugins -- --out /tmp/plugin-report.json
 ```
 
 The Electron scripts use disposable user data and fixture APIs. They do not start the user's primary app or publish packages. The isolation script deliberately creates flooding, busy and memory-consuming Workers; run it as a separate acceptance check, not inside normal `npm test`.
 
+## Settings and page-order follow-up
+
+The Installed toolbar contains file installation and a shared-menu action for the saved master preference. Safe mode does not overwrite that preference; pausing keeps each plugin's selections and uses an inline summary. Pointer opening does not force keyboard focus onto the switch. Notch page choices reuse the shared drag controller for wrapped, mixed built-in/plugin ordering, with keyboard alternatives and a right-aligned Reset action matching the existing Dock/Notch composer. Reset changes order only. Cross-camera selection uses the existing transition and respects reduced motion.
+
+Disabled plugins are omitted from the Notch choices, Dock cells and final Tray bitmap without deleting placement/order preferences. Re-enabling restores those preferences. Home, main-menu pages and Notch runtime metadata already filter inactive plugins; unavailable saved composer entries remain editable preferences.
+
+- Final `npm run verify`: **7,731 passed, 8 skipped, 0 failed**, including lint. An earlier run exposed a Notch VM fixture missing its new `pluginRuntime` dependency; the fixture was corrected without removing assertions and the complete rerun passed.
+- Isolated Chromium ordering/availability harness: **19/19**. Covers wrapped drag, keyboard sorting, disk reload, failed-save recovery, zoom, reset, disabled/master-off filtering and restoration of order/visibility.
+- Independent availability/reset review: **bounded GO**, **571 Node tests**, **19 Chromium checks** and **3 production probes** passed; **11/11** frozen source hashes unchanged. The probes include immediate Dock repaint, no-stats handling and Tray null-bitmap fallback. The reviewer read the earlier full-suite log; the final complete green rerun above is parent evidence.
+- Independent mixed-order review: **141 Node tests** and **13 Chromium checks** passed, with supplementary Escape/resize cancellation probes. Toolbar safe-mode correction review also returned bounded GO. Cross-camera motion regressions failed **3/54** before and passed **54/54** after correction.
+
+[Before sorting](evidence/settings-followup/order-before.png) and [after moving a plugin ahead of Home](evidence/settings-followup/order-after.png) use matching synthetic data, dimensions and zoom. They demonstrate production controls and renderer behavior, not hardware camera acceptance. The standalone settings fixture's lower mock Notch metadata is static during availability tests; its disabled-page screenshot is not used as runtime evidence. Physical hardware, native menu-bar composition and packaging remain outside these checks.
+
 ## Notch B navigation follow-up
 
 The local B layout fills the camera-left lane in normal page order, then continues into the right lane before the rate/refresh controls. Whole tabs are distributed in discrete slots; only overflow across both lanes shows the small step controls inside a rounded track. Paging the tab window does not change the open content. Arrow keys navigate relative to the focused tab, including when the selected tab has been paged out of sight. Without a camera, one continuous rail occupies the available space before status.
 
-The original Notch settings use the same page/icon choices as compact toggle chips. Selected/unselected/unavailable states, failed saves, concurrent refresh and focus restoration use the existing placement/settings paths. The isolated running App showed seven choices on two lines at 380 CSS px (the choice block measured about 127 CSS px), with no horizontal overflow; this is temporary acceptance data, not a primary-user profile.
+The original Notch settings use the same page/icon choices as compact toggle chips. Selected/unselected states, failed saves, concurrent refresh and focus restoration use the existing placement/settings paths; disabled plugin choices are now filtered as described above. The isolated running App showed seven choices on two lines at 380 CSS px (the choice block measured about 127 CSS px), with no horizontal overflow; this is temporary acceptance data, not a primary-user profile.
 
 - Final complete `npm run verify`: **7,720 passed, 8 skipped, 0 failed**, including lint. An earlier run after correction had one native watcher timeout (7,719 pass, 8 skipped); its standalone 26-test suite and the subsequent full rerun both passed. No watcher code was changed.
 - Focused Node tests: **86/86**.

@@ -24,7 +24,7 @@
     return t(`settings.plugins.permission.${permission}`, { hosts: hosts.join(', ') });
   }
 
-  function createPluginSettingsPanel({ document, container, t, api, setDetailTooltip = null, onError = () => {}, onApplySkin = () => {}, onPlaced = () => {} }) {
+  function createPluginSettingsPanel({ document, container, t, api, setDetailTooltip = null, onError = () => {}, onApplySkin = () => {}, onPlaced = () => {}, onSetEnabled = null, getEnabled = null }) {
     let list = null;
     let consentFor = '';
     let busy = false;
@@ -34,7 +34,7 @@
     let catalogData = null, activeTab = 'installed', query = '', sourcesOpen = false;
     let styleState = null, styleDraft = null, styleTransfer = '', styleDirty = false;
     let selectedPluginId = '', diagnostics = false, installedPosition = null;
-    let catalogReview = null, transferOpen = false, menuId = 0;
+    let catalogReview = null, transferOpen = false, menuId = 0, aboutOpen = false;
     const sourceDraft = { url: '', publicKey: '' };
     const chosenVersions = new Map();
     const detailState = new Map();
@@ -137,11 +137,21 @@
       group.append(art, title); return group;
     }
 
-    function actionMenu(label, entries) {
+    function actionMenu(label, entries, leadingControl = null) {
       const wrap = el(document, 'div', 'plugin-menu-wrap');
       const popover = el(document, 'div', 'plugin-menu'); popover.id = `plugin-menu-${++menuId}`; popover.setAttribute('popover', 'auto');
-      const trigger = button('⋯', () => {}, 'plugin-more'); trigger.setAttribute('aria-label', label);
+      const trigger = button('', () => {}, 'plugin-more'); trigger.setAttribute('aria-label', label);
+      const icon = el(document, 'span', 'plugin-more-icon'); icon.setAttribute('aria-hidden', 'true'); trigger.append(icon);
       trigger.setAttribute('popovertarget', popover.id); trigger.setAttribute('aria-controls', popover.id); trigger.setAttribute('aria-expanded', 'false');
+      let keyboardOpen = false, focusLast = false;
+      const menuItems = () => [...popover.querySelectorAll('button:not(:disabled), input:not(:disabled)')];
+      trigger.addEventListener('click', event => { keyboardOpen = event.detail === 0; focusLast = false; });
+      trigger.addEventListener('keydown', event => {
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        event.preventDefault(); keyboardOpen = true; focusLast = event.key === 'ArrowUp';
+        if (popover.matches(':popover-open')) (focusLast ? menuItems().at(-1) : menuItems()[0])?.focus({ preventScroll: true });
+        else popover.showPopover();
+      });
       popover.addEventListener('toggle', () => {
         trigger.setAttribute('aria-expanded', String(popover.matches(':popover-open')));
         if (popover.matches(':popover-open')) {
@@ -150,19 +160,43 @@
             width: popover.offsetWidth, height: popover.scrollHeight + 2, align: 'end', heightLimit: window.innerHeight
           });
           Object.assign(popover.style, { left: `${position.left}px`, top: `${position.top}px`, width: `${position.width}px`, maxHeight: `${position.maxHeight}px` });
-          popover.querySelector('button')?.focus({ preventScroll: true });
+          if (keyboardOpen) (focusLast ? menuItems().at(-1) : menuItems()[0])?.focus({ preventScroll: true });
         }
       });
       popover.addEventListener('keydown', (event) => {
         const direction = { ArrowDown: 1, ArrowUp: -1, Home: 'first', End: 'last' }[event.key];
         if (direction === undefined) return;
         event.preventDefault();
-        const items = [...popover.querySelectorAll('button')];
+        const items = menuItems();
         const next = positionApi.navigate(items, items.indexOf(document.activeElement), direction);
         items[next]?.focus();
       });
+      if (leadingControl) popover.append(leadingControl);
       for (const [text, action] of entries) popover.append(button(text, () => { popover.hidePopover(); trigger.focus({ preventScroll: true }); action(); }));
       wrap.append(trigger, popover); return wrap;
+    }
+
+    // Runtime enabled also includes safe mode. The switch edits the saved
+    // preference, independently of whether activation is currently allowed.
+    function masterPreference() { return getEnabled ? getEnabled() : list.enabled; }
+
+    function globalSwitch() {
+      const row = el(document, 'label', 'checkbox-label plugin-global-switch');
+      row.append(el(document, 'span', '', t('settings.plugins.enableAll')));
+      const toggle = el(document, 'input'); toggle.type = 'checkbox'; toggle.setAttribute('role', 'switch');
+      toggle.dataset.controlKey = 'plugins-enabled'; toggle.checked = masterPreference();
+      toggle.disabled = busy || !onSetEnabled;
+      toggle.addEventListener('change', () => {
+        if (busy) { toggle.checked = masterPreference(); return; }
+        const enabled = toggle.checked;
+        const menu = toggle.closest('.plugin-menu');
+        menu.hidePopover(); menu.parentElement.querySelector('.plugin-more').focus({ preventScroll: true });
+        void run(async () => {
+          try { return await onSetEnabled(enabled); }
+          catch (error) { list = await api.list(); throw error; }
+        });
+      });
+      row.append(toggle); return row;
     }
 
     async function previewCatalog(entry, version) {
@@ -717,6 +751,13 @@
         else nodes.push(catalogPanel());
         replaceContent(nodes); return;
       }
+      if (aboutOpen) {
+        const about = el(document, 'section', 'plugin-about');
+        about.append(button(t('plugins.ui.back'), () => {
+          aboutOpen = false; render(); content.querySelector('.plugin-toolbar .plugin-more')?.focus({ preventScroll: true });
+        }, 'plugin-back'), el(document, 'h3', '', t('plugins.ui.about')), el(document, 'p', 'settings-note', t('settings.plugins.intro')));
+        nodes.push(about); replaceContent(nodes); return;
+      }
       if (selectedPluginId) {
         const plugin = list.plugins.find(item => item.id === selectedPluginId);
         if (plugin) {
@@ -728,13 +769,22 @@
       if (list.safeMode) nodes.push(el(document, 'p', 'plugin-banner', t('settings.plugins.safeMode')));
       const actions = el(document, 'div', 'plugin-toolbar');
       const importPackage = kind => void run(async () => { packagePreview = await api.importPackage(kind); return null; });
-      actions.append(el(document, 'span', 'plugin-toolbar-count', t('plugins.ui.count', { count: list.plugins.length })),
+      const countText = t('plugins.ui.count', { count: list.plugins.length });
+      const count = el(document, 'span', 'plugin-toolbar-count', countText);
+      count.setAttribute('role', 'status'); count.setAttribute('aria-atomic', 'true');
+      if (!list.enabled) {
+        count.append(document.createTextNode(' · '), el(document, 'span', 'plugin-paused', t('plugins.ui.pausedShort')));
+        count.setAttribute('aria-label', `${countText} · ${t('plugins.ui.paused')}`);
+        count.title = `${countText} · ${t('plugins.ui.paused')}`;
+      }
+      actions.append(count,
         button(t('plugins.package.import'), () => importPackage('file'), 'plugin-inline-action'),
         actionMenu(t('plugins.ui.more'), [
           [t('plugins.package.importFolder'), () => importPackage('directory')],
           [t('settings.plugins.openFolder'), () => void run(async () => { await api.openFolder(); return null; })],
-          [t('settings.plugins.reload'), () => void run(() => api.reload())]
-        ]));
+          [t('settings.plugins.reload'), () => void run(() => api.reload())],
+          [t('plugins.ui.about'), () => { aboutOpen = true; render(); content.querySelector('.plugin-back')?.focus({ preventScroll: true }); }]
+        ], globalSwitch()));
       nodes.push(actions);
       if (packagePreview) nodes.push(packagePanel());
       if (!list.plugins.length) nodes.push(el(document, 'p', 'settings-note', t('settings.plugins.empty')));
@@ -762,7 +812,7 @@
       list: () => list,
       // Consent and logs are interaction state: a background push must not
       // close an open consent panel the user is reading.
-      isInteracting: () => activeTab === 'style' || Boolean(consentFor || packagePreview || operation || selectedPluginId) || busy || Boolean(container.querySelector('.plugin-location-count [role="tooltip"]:popover-open')) || container.contains(document.activeElement)
+      isInteracting: () => activeTab === 'style' || Boolean(consentFor || packagePreview || operation || selectedPluginId || aboutOpen) || busy || Boolean(container.querySelector('.plugin-menu:popover-open, .plugin-location-count [role="tooltip"]:popover-open')) || container.contains(document.activeElement)
     };
   }
 

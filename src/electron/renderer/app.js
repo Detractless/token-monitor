@@ -571,7 +571,6 @@ Object.assign(els, {
   windowSettingsSummary: document.getElementById('windowSettingsSummary'),
   appearanceSettingsSummary: document.getElementById('appearanceSettingsSummary'),
   pluginsSettingsSummary: document.getElementById('pluginsSettingsSummary'),
-  pluginsEnabledInput: document.getElementById('pluginsEnabledInput'),
   backgroundImageStatus: document.getElementById('backgroundImageStatus'),
   chooseBackgroundImageButton: document.getElementById('chooseBackgroundImageButton'),
   clearBackgroundImageButton: document.getElementById('clearBackgroundImageButton'),
@@ -9499,7 +9498,6 @@ function syncSettingsForm() {
   );
   els.swapSettingsRefreshInput.checked = state.settings.settingsInTitlebar === true;
   els.discordRpcInput.checked = Boolean(state.settings.discordRpcEnabled);
-  if (els.pluginsEnabledInput) els.pluginsEnabledInput.checked = state.settings.pluginsEnabled !== false;
   els.floatingBubbleInput.checked = state.settings.floatingBubbleEnabled === true;
   const floatingBubbleTrigger = state.settings.floatingBubbleTrigger === 'hover' ? 'hover' : 'click';
   for (const input of els.floatingBubbleTriggerInputs || []) input.checked = input.value === floatingBubbleTrigger;
@@ -12710,9 +12708,14 @@ window.addEventListener('blur', () => {
 function renderNotchPageChoices() {
   window.TokenMonitorNotchPageSettings?.render({ document, container: document.getElementById('notchPageChoices'),
     settings: state.settings, catalog: state.pluginCatalog, t,
+    resetButton: document.getElementById('resetNotchPageOrderButton'),
     save: async patch => { await saveSettings(patch); },
     place: async (ref, placed) => { await pluginApi.place(ref, 'notch', placed); },
     pluginIcon: name => window.TokenMonitorPluginViews?.iconNode(document, name, null, 14),
+    createRowDrag: config => rowDragControllerApi.createRowDragController({
+      dragSort: verticalDragSortApi, getScrollPanel: () => els.settingsPanel,
+      preserveScroll: preserveSettingsPanelScroll, ...config
+    }),
     onError: error => setStatus(error.message, true)
   });
 }
@@ -12798,7 +12801,13 @@ pluginSettingsPanel = pluginApi && window.TokenMonitorPluginSettings
       setStatus(known ? t(known) : t('settings.plugins.actionFailed', { error: message }), true);
     },
     onApplySkin: (skin) => void applyPluginSkin(skin),
-    onPlaced: () => renderSettingsSummaries()
+    onPlaced: () => renderSettingsSummaries(),
+    getEnabled: () => state.settings.pluginsEnabled !== false,
+    onSetEnabled: async (enabled) => {
+      await saveSettings({ pluginsEnabled: enabled });
+      renderSettingsSummaries();
+      return pluginApi.list();
+    }
   }) : null;
 
 async function refreshPluginCatalog() {
@@ -13552,11 +13561,6 @@ els.swapSettingsRefreshInput.addEventListener('change', () => {
   void saveAppearanceFromControls();
 });
 els.discordRpcInput.addEventListener('change', saveAppearanceFromControls);
-els.pluginsEnabledInput?.addEventListener('change', async () => {
-  await saveSettings({ pluginsEnabled: els.pluginsEnabledInput.checked });
-  await pluginSettingsPanel?.refresh();
-  renderSettingsSummaries();
-});
 els.windowBehaviorInput.addEventListener('change', () => saveSettings({ windowBehavior: els.windowBehaviorInput.value }));
 els.keepAboveTaskbarInput?.addEventListener('change', () => saveSettings({ keepAboveTaskbar: els.keepAboveTaskbarInput.checked }));
 els.floatingBubbleInput.addEventListener('change', () => {
@@ -15003,7 +15007,7 @@ function renderCustomTrayLayout(stats, layout, height = 44, colors = {}, options
     liveTokenRateFormatter: options.liveTokenRateFormatter || ((value) => formatLiveTokenRate(value)),
     pluginViews: pluginTrayViews()
   });
-  const items = resolved.items.map((item) => (
+  const items = resolved.items.filter(item => item.type !== 'plugin' || item.available).map((item) => (
     item.type === 'text'
       && item.metric === 'account'
       && state.settings?.maskLimitAccountEmails === true

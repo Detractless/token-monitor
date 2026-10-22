@@ -9,6 +9,7 @@ Sources:
   - actions/download.svg: download
   - actions/rotate-cw.svg: rotate-cw
   - actions/external-link.svg: external-link
+  - actions/ellipsis.svg: ellipsis
   - actions/shield-check.svg: shield-check
   - actions/check.svg: check (stroke widened to 3 for legibility as a small badge)
   - settings/general.svg: sliders-horizontal

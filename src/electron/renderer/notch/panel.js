@@ -6,10 +6,11 @@
 // typography and colours but owns its own layout; no card or list styles from
 // the Edge Dock or the Home view are reused here.
 (function exposeNotchPanel(root, factory) {
-  const api = factory();
+  const placements = typeof module === 'object' && module.exports ? require('../../../shared/plugins/placements') : root.TokenMonitorPluginPlacements;
+  const api = factory(placements);
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.TokenMonitorNotchPanel = api;
-})(typeof window !== 'undefined' ? window : null, function createNotchPanelApi() {
+})(typeof window !== 'undefined' ? window : null, function createNotchPanelApi(placements) {
   // Logical points inside the zoomed panel. The band shares the camera row on
   // an attached shell and becomes the first row of a capsule.
   const PANEL_METRICS = Object.freeze({ band: 34, pages: 176, gap: 6, bottom: 18, padding: 24 });
@@ -169,15 +170,15 @@
       const entry = selected && !selected.hidden ? selected : tabButtons.get(leadPages[0] || trailPages[0]);
       for (const button of tabButtons.values()) button.tabIndex = button === entry ? 0 : -1;
     }
-    // A pill switching on lands at its slot without the slide transition,
-    // while a pill moving inside its own track keeps the spring.
+    // Across the camera, position the incoming pill while it is hidden and
+    // retain its opacity transition. Local moves keep the existing spring.
     function syncPill(pill, index, offset) {
       if (index < 0) { pill.classList.add('is-off'); return; }
       const wasOff = pill.classList.contains('is-off');
-      if (wasOff) pill.style.transition = 'none';
+      if (wasOff) pill.style.transitionProperty = 'opacity';
       pill.style.transform = `translateX(${index * TAB_SLOT + offset}px)`;
+      if (wasOff) { void pill.offsetWidth; pill.style.transitionProperty = ''; }
       pill.classList.remove('is-off');
-      if (wasOff) { void pill.offsetWidth; pill.style.transition = ''; }
     }
     const pages = el('div', 'notch-pages');
     // The fixed pages first, then any plugin pages the user placed here.
@@ -226,10 +227,10 @@
     node.append(band, pages);
     // Placed plugin pages arrive with each push; a page whose plugin went away
     // is removed, and the panel falls back to Home if it was showing.
-    function syncPluginPages(refs, builtins) {
+    function syncPluginPages(refs, builtins, order) {
       const wanted = (Array.isArray(refs) && pluginHost ? refs : []).map((ref) => `${PLUGIN_PAGE_PREFIX}${ref}`);
       const selectedBuiltins = Array.isArray(builtins) ? PAGES.filter(page => builtins.includes(page)) : PAGES;
-      const next = [...selectedBuiltins, ...wanted];
+      const next = placements.orderNotchPages([...selectedBuiltins, ...wanted], order);
       if (next.join('|') === pageOrder.join('|')) return;
       for (const page of pageOrder) {
         if (next.includes(page) || PAGES.includes(page)) continue;
@@ -1232,7 +1233,7 @@
 
     function render(next, { opening = false } = {}) {
       payload = next;
-      syncPluginPages(next?.panel?.pluginPages, next?.panel?.builtinPages);
+      syncPluginPages(next?.panel?.pluginPages, next?.panel?.builtinPages, next?.panel?.pageOrder);
       node.classList.toggle('is-reduced-motion', prefersReducedMotion());
       if (opening) {
         view.scrub = null; pageKeys = new Map();

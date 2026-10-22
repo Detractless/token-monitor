@@ -3037,8 +3037,6 @@ button.settings-help-trigger:focus-visible { outline: 1px solid var(--accent); o
 .theme-preset-chip.active { border-color: rgba(var(--accent-rgb), 0.58); color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
 .theme-preset-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25); }
 .notch-page-settings { display: grid; gap: 8px; min-width: 0; padding: 8px 0 4px; }
-.notch-page-settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; color: var(--text); font-size: 0.6875rem; }
-.notch-page-settings-heading > span:last-child { overflow: hidden; color: var(--muted); font-size: 0.5625rem; text-overflow: ellipsis; white-space: nowrap; }
 .notch-page-settings > .settings-note { margin: 0; }
 .notch-page-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .notch-page-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; max-width: 100%; padding: 0 10px 0 8px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font: inherit; font-size: 0.6875rem; cursor: pointer; transition: border-color 160ms ease, color 160ms ease, background 160ms ease; }
@@ -8481,10 +8479,10 @@ html.native-liquid-glass .view-switcher-menu-item { border-radius: 9px; }
 .plugin-card-footer > .plugin-placement-summary, .plugin-card-footer > .plugin-status { flex: 1; }
 .plugin-card-footer .plugin-status { line-height: 1.4; }
 .plugin-toolbar { display: flex; align-items: center; gap: 8px; min-height: 30px; }
-.plugin-toolbar-count { flex: 1; min-width: 0; font-size: .625rem; color: var(--muted); }
+.plugin-toolbar-count { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .625rem; color: var(--muted); }
 .plugin-inline-action, .plugin-more, .settings-actions button.plugin-installed-link { box-shadow: none; border: 0; border-radius: 5px; background: transparent; color: var(--muted); padding: 5px 4px; font: inherit; font-size: .6875rem; cursor: pointer; }
 .plugin-inline-action:hover, .plugin-more:hover, .settings-actions button.plugin-installed-link:hover { color: var(--text); background: rgba(var(--overlay-rgb), .06); }
-.plugin-more { min-width: 28px; min-height: 28px; font-size: 1rem; line-height: 1; }
+.plugin-more { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; min-height: 28px; font-size: 1rem; line-height: 1; }
 /* Popover lifecycle is native; plate and item treatment are shared with App menus. */
 .plugin-menu { position: fixed; inset: auto; margin: 0; min-width: min(160px, calc(100vw - 16px)); max-width: calc(100vw - 16px); box-sizing: border-box; overflow: auto; overscroll-behavior: contain; color: var(--text); -webkit-app-region: no-drag; }
 .plugin-menu:popover-open { display: flex; flex-direction: column; }
@@ -8519,3 +8517,15 @@ html.native-liquid-glass .view-switcher-menu-item { border-radius: 9px; }
 .plugin-source-official .plugin-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-identity .plugin-source-official .plugin-origin-label { flex-shrink: 0; font-size: inherit; }
 .plugin-source-official .plugin-author + .plugin-origin-label::before { content: '·'; margin-right: 1px; }
+
+.plugin-more-icon { display: block; width: 16px; height: 16px; background: currentColor; mask: url("icons/actions/ellipsis.svg") center / contain no-repeat; }
+.plugin-menu .plugin-global-switch { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 5px 7px 9px; margin: 0 0 4px; border-bottom: 1px solid var(--line); color: var(--text); font-size: .6875rem; cursor: pointer; }
+.plugin-global-switch > span { min-width: 0; }
+
+/* Wrapped Notch chips use the same drag controller as the other settings lists. */
+.notch-page-chips.is-reordering { overflow-anchor: none; }
+.notch-page-chip { touch-action: none; }
+.notch-page-chips.drag-active > .notch-page-chip { position: relative; transform: translate(var(--drag-shift-x, 0px), var(--drag-shift-y, 0px)); transition: transform 160ms var(--ease-out, ease), opacity 160ms ease; }
+.notch-page-chips.drag-active > .notch-page-chip.dragging { z-index: 2; transform: translate(var(--drag-x, 0px), var(--drag-y, 0px)); transition: none; cursor: grabbing; }
+.notch-page-chips.drag-active > .notch-page-chip:not(.dragging) { opacity: .78; }
+.notch-page-chips.is-landing > .notch-page-chip { transition: none; }

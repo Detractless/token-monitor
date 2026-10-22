@@ -264,16 +264,32 @@ test('overflow pages continue in the trailing track bridged by aria-owns', t => 
   assert.deepEqual(visibleIn(trailTrack), ['plugin:demo/b', 'plugin:demo/c']);
   assert.equal(f.all('notch-tab-step').filter(step => !step.hidden).length, 0, 'both lanes fit, so no pager');
   assert.equal(leadTrack.attributes['aria-owns'], 'notch-tab-plugin-demo-b notch-tab-plugin-demo-c');
-  // Selecting a trailing page moves the pill across the camera.
+  // Selecting a trailing page activates its local indicator across the camera.
   f.panel.selectPage('plugin:demo/c');
   assert.equal(leadPill.classList.contains('is-off'), true);
   assert.equal(trailPill.classList.contains('is-off'), false);
   assert.equal(trailPill.style.transform, 'translateX(36px)');
-  // Back to a leading page: the pill crosses again without sliding in.
+  // Back to a leading page: position the hidden local indicator before fading it in.
   f.panel.selectPage('home');
   assert.equal(leadPill.classList.contains('is-off'), false);
   assert.equal(leadPill.style.transform, 'translateX(0px)');
   assert.equal(trailPill.classList.contains('is-off'), true);
+});
+
+test('mixed saved order controls runtime tabs and keyboard order without selecting hidden pages', t => {
+  const { f, data, leadTrack, trailTrack, visibleIn } = pluginPageFixture(t, ['demo/a', 'demo/b', 'demo/c']);
+  data.panel.builtinPages = ['home', 'limits'];
+  data.panel.pageOrder = ['plugin:demo/c', 'limits', 'plugin:demo/a', 'home'];
+  f.panel.render(data);
+  assert.deepEqual([...visibleIn(leadTrack), ...visibleIn(trailTrack)], ['plugin:demo/c', 'limits', 'plugin:demo/a', 'home', 'plugin:demo/b']);
+  f.panel.selectPage('home');
+  leadTrack.fire('keydown', { key: 'ArrowRight', preventDefault() {} });
+  assert.equal(f.panel.view.page, 'plugin:demo/b');
+  f.panel.selectPage('plugin:demo/c');
+  data.panel.pageOrder = ['limits', 'plugin:demo/c', 'home']; f.panel.render(data);
+  assert.equal(f.panel.view.page, 'plugin:demo/c', 'ordering preserves the selected page');
+  data.panel.pluginPages = ['demo/a', 'demo/b']; f.panel.render(data);
+  assert.equal(f.panel.view.page, 'limits', 'removal falls back to the first remaining ordered page');
 });
 
 test('a full trailing lane becomes a pager that keeps its window across pushes', t => {

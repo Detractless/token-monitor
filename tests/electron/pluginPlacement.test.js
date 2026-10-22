@@ -90,3 +90,13 @@ test('plugin host windows are Chromium-sandboxed with no Node in page or workers
   const worker = sandbox.workerSource('tm.log(1);');
   assert.match(worker, /\(function pluginMain\(\) \{\ntm\.log\(1\);\n\}\)\.call\(self\);/);
 });
+
+
+test('Edge Dock omits inactive plugin cells while retaining their saved placements', () => {
+  const items = [{ type: 'stat', metric: 'liveRate' }, { type: 'plugin', ref: REF }];
+  const before = JSON.stringify(items);
+  assert.equal(buildEdgeDockCells({}, { items, availablePluginRefs: [REF] }).some(c => c.kind === 'plugin'), true);
+  assert.equal(buildEdgeDockCells({}, { items, availablePluginRefs: [] }).some(c => c.kind === 'plugin'), false);
+  assert.equal(buildEdgeDockCells({}, { items, availablePluginRefs: [REF] }).some(c => c.kind === 'plugin'), true);
+  assert.equal(JSON.stringify(items), before);
+});

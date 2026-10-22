@@ -29,6 +29,7 @@ class Element {
       node.parent = this; this.children.push(node);
     }
   }
+  remove() { if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; }
   replaceChildren(...nodes) { this.children.forEach(node => { node.parent = null; }); this.children = []; this.append(...nodes); }
   setAttribute(key, value) { this.attributes[key] = String(value); if (key === 'class') this.className = value; }
   removeAttribute(key) { delete this.attributes[key]; }

@@ -34,7 +34,7 @@ const catalog = {
 test('entries pair a short label, a de-duplicated title and the tab icon', () => {
   const list = entries({}, catalog, t);
   assert.deepEqual(list.map(entry => entry.id),
-    ['home', 'limits', 'sessions', 'breakdown', 'plugin:pulse/main', 'plugin:pulse/mini', 'plugin:idle/main']);
+    ['home', 'limits', 'sessions', 'breakdown', 'plugin:pulse/main', 'plugin:pulse/mini']);
   assert.deepEqual(list.slice(0, 4).map(entry => [entry.label, entry.icon.name]),
     [['Home', 'home'], ['Limits', 'limits'], ['Sessions', 'session'], ['Breakdown', 'model']]);
   const same = list.find(entry => entry.id === 'plugin:pulse/main');
@@ -48,16 +48,21 @@ test('entries pair a short label, a de-duplicated title and the tab icon', () =>
   assert.equal(same.checked, true);
 });
 
-test('entries disable unavailable plugins but keep a checked one removable', () => {
-  const list = entries({}, catalog, t);
-  const idle = list.find(entry => entry.id === 'plugin:idle/main');
-  assert.equal(idle.unavailable, true);
-  assert.equal(idle.checked, false);
-  const disabled = entries({ pluginsEnabled: false }, catalog, t);
-  assert.equal(disabled.find(entry => entry.id === 'plugin:pulse/main').unavailable, true,
-    'the plugins-enabled master switch gates every plugin entry');
-  const chosen = entries({ notchBuiltinPages: ['home'] }, catalog, t);
-  assert.deepEqual(chosen.slice(0, 4).map(entry => entry.checked), [true, false, false, false]);
+test('page choices hide inactive plugins and a paused catalog without erasing saved choices', () => {
+  const fixture = structuredClone(catalog);
+  const settings = { notchBuiltinPages: ['home'], notchPageOrder: ['plugin:pulse/main', 'home'], notchPluginPages: ['pulse/main'] };
+  const saved = JSON.stringify({ settings, fixture });
+  assert.equal(entries(settings, fixture, t)[0].id, 'plugin:pulse/main');
+  for (const status of ['disabled', 'pluginsOff', 'safeMode', 'crashed', 'needsApproval', 'invalid']) {
+    fixture.plugins[0].status = status;
+    assert.deepEqual(entries(settings, fixture, t).map(e => e.id), ['home', 'limits', 'sessions', 'breakdown']);
+  }
+  fixture.plugins[0].status = 'active';
+  assert.equal(entries({ ...settings, pluginsEnabled: false }, fixture, t).length, 4);
+  assert.equal(entries(settings, { ...fixture, enabled: false }, t).length, 4);
+  const restored = entries(settings, fixture, t);
+  assert.equal(restored[0].id, 'plugin:pulse/main'); assert.equal(restored[0].checked, true);
+  assert.equal(JSON.stringify({ settings, fixture }), saved);
 });
 
 test('chips toggle through click, restore state on failure and keep focus', async () => {
@@ -79,7 +84,7 @@ test('chips toggle through click, restore state on failure and keep focus', asyn
   };
   render(options);
   const chip = id => container.querySelectorAll('button').find(node => node.dataset.page === id);
-  assert.equal(container.querySelectorAll('button').length, 7);
+  assert.equal(container.querySelectorAll('button').length, 6);
   assert.equal(chip('home').children[0].className, 'view-switcher-icon view-icon-home');
   assert.equal(chip('home').children[1].textContent, 'Home');
   assert.equal(chip('home').attributes['aria-pressed'], 'true');
@@ -87,7 +92,7 @@ test('chips toggle through click, restore state on failure and keep focus', asyn
   assert.equal(chip('plugin:pulse/mini').title, 'Token Pulse · Mini');
   assert.equal(chip('plugin:pulse/mini').attributes['aria-label'], 'Token Pulse · Mini');
   assert.ok(chip('plugin:pulse/mini').querySelector('.pv-icon'), 'plugin chips paint the plugin icon');
-  assert.equal(chip('plugin:idle/main').disabled, true, 'an unchecked unavailable page cannot be enabled');
+  assert.equal(chip('plugin:idle/main'), undefined, 'inactive plugins have no page chip');
 
   chip('limits').focus();
   chip('limits').fire('click', {});
@@ -126,4 +131,55 @@ test('a focused chip survives re-renders while the container is saving', async (
   const before = container.querySelectorAll('button').length;
   render(options);
   assert.equal(container.querySelectorAll('button').length, before, 'a save in flight does not rebuild mid-gesture');
+});
+
+
+test('mixed page order retains hidden entries and keyboard sorting preserves visibility', async () => {
+  const document = documentStub(), container = new Element('div', document); document.body.append(container);
+  let fail = false, errors = 0;
+  const settings = { notchPageOrder: ['plugin:pulse/main', 'home', 'limits'], notchBuiltinPages: ['home'] };
+  const options = { document, container, settings, catalog: structuredClone(catalog), t,
+    save: async patch => { if (fail) throw Error('disk'); Object.assign(settings, patch); }, place: async () => {}, onError: () => errors++ };
+  const ids = () => container.querySelectorAll('button').map(node => node.dataset.page);
+  const chip = id => container.querySelectorAll('button').find(node => node.dataset.page === id);
+  render(options);
+  assert.deepEqual(ids().slice(0, 3), ['plugin:pulse/main', 'home', 'limits']);
+  chip('plugin:pulse/main').focus();
+  chip('plugin:pulse/main').fire('keydown', { altKey: true, key: 'End', preventDefault() {} });
+  await flush(); await flush();
+  assert.equal(ids().at(-1), 'plugin:pulse/main');
+  assert.equal(document.activeElement?.dataset.page, 'plugin:pulse/main');
+  assert.deepEqual(settings.notchBuiltinPages, ['home'], 'reordering does not toggle visibility');
+  const previous = [...settings.notchPageOrder]; fail = true;
+  chip('home').focus(); chip('home').fire('keydown', { altKey: true, key: 'ArrowRight', preventDefault() {} });
+  await flush(); await flush();
+  assert.deepEqual(settings.notchPageOrder, previous); assert.deepEqual(ids(), previous); assert.equal(errors, 1);
+  assert.equal(document.activeElement?.dataset.page, 'home');
+});
+
+test('reset order preserves visibility and recovers from failed saves without duplicate submissions', async () => {
+  const document = documentStub(), container = new Element('div', document), resetButton = new Element('button', document);
+  document.body.append(resetButton, container);
+  const settings = { notchPageOrder: ['plugin:pulse/main', 'limits', 'home'], notchBuiltinPages: ['home'] };
+  const fixtureCatalog = structuredClone(catalog), beforePlacements = JSON.stringify(fixtureCatalog);
+  let pending, errors = 0; const patches = [];
+  const options = { document, container, resetButton, settings, catalog: fixtureCatalog, t,
+    save: patch => { patches.push(patch); return new Promise((resolve, reject) => { pending = { resolve: () => { Object.assign(settings, patch); resolve(); }, reject }; }); },
+    place: () => assert.fail('reset must not change plugin placements'), onError: () => errors++ };
+  render(options); render(options);
+  assert.equal(resetButton.disabled, false);
+  assert.equal(resetButton.hidden, false, 'custom order exposes the text reset action');
+  resetButton.fire('click'); resetButton.fire('click');
+  assert.equal(patches.length, 1, 'one reset stays in flight across repeated clicks and renders');
+  assert.equal(resetButton.disabled, true);
+  pending.reject(Error('disk')); await flush(); await flush();
+  assert.equal(errors, 1); assert.equal(resetButton.disabled, false);
+  assert.equal(container.querySelectorAll('button')[0].dataset.page, 'plugin:pulse/main');
+  resetButton.fire('click'); pending.resolve(); await flush(); await flush();
+  assert.deepEqual(patches.at(-1), { notchPageOrder: [] });
+  assert.deepEqual(container.querySelectorAll('button').slice(0, 4).map(n => n.dataset.page), ['home', 'limits', 'sessions', 'breakdown']);
+  assert.deepEqual(settings.notchBuiltinPages, ['home']);
+  assert.equal(JSON.stringify(fixtureCatalog), beforePlacements);
+  assert.equal(resetButton.disabled, true, 'default order has nothing to reset');
+  assert.equal(resetButton.hidden, true, 'default order hides reset like the existing Dock/Notch composer');
 });

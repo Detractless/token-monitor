@@ -69,7 +69,8 @@ app.whenReady().then(async () => {
     const pluginHost=TokenMonitorPluginViews.createPluginViewHost({document,window,onDemand:(_,refs)=>calls.push(['demand',refs])});
     pluginHost.update({surface:'notch',views:Object.fromEntries(refs.map(ref=>[ref,{...states[ref],status:'ok',tree:{type:'text',text:states[ref].title}}]))});
     const formatRate=value=>{const n=Math.max(0,Number(value)||0);if(n>0&&n<.1)return '<0.1';if(n>0&&n<1)return n.toLocaleString('en',{maximumFractionDigits:1});return TokenMonitorCompactTokens.formatCompactTokens(n,'western','en',{style:'tray'});};
-    const shared={pluginHost,markNode:()=>el('span'),hasMask:()=>false,providerLabel:x=>x,limitProviderColor:()=>'',formatTokens:String,formatCardTokens:String,formatBreakdownTokens:String,usageCostNode:()=>el('span'),formatRate,appearance:()=>({}),prefersReducedMotion:()=>true,limitAccountTitle:()=>'',overflowText:{stop(){},preserveReading(){},refresh(){}},limitWindowsView:{},ensureRefreshButton:()=>el('button')};
+    let panelReducedMotion=true;
+    const shared={pluginHost,markNode:()=>el('span'),hasMask:()=>false,providerLabel:x=>x,limitProviderColor:()=>'',formatTokens:String,formatCardTokens:String,formatBreakdownTokens:String,usageCostNode:()=>el('span'),formatRate,appearance:()=>({}),prefersReducedMotion:()=>panelReducedMotion,limitAccountTitle:()=>'',overflowText:{stop(){},preserveReading(){},refresh(){}},limitWindowsView:{},ensureRefreshButton:()=>el('button')};
     const options={document,window,el,t:key=>TokenMonitorI18n.translate('en',key),state:{locale:'en'},bridge:{},shared};
     const old=TokenMonitorNotchPanelBefore.createNotchPanel(options),panel=TokenMonitorNotchPanel.createNotchPanel(options);
     document.getElementById('old-notch').append(old.node);document.getElementById('new-notch').append(panel.node);
@@ -99,6 +100,27 @@ app.whenReady().then(async () => {
     // Four built-ins plus three plugin pages split across the two lanes.
     data.panel.builtinPages=['home','limits','sessions','breakdown'];data.panel.pluginPages=refs.slice(0,3);panel.render(data);await wait(25);
     check('seven-pages-no-steps',steps().length===0&&tabs().length===7&&trailTrack.querySelectorAll('.notch-tab').length===2,{visible:tabs().length,lead:leadRail.clientWidth,trail:trailRail.clientWidth,status:statusEl.offsetWidth});
+    // The same spring handles local movement; crossing the camera fades between
+    // the two fixed local indicators without drawing through the camera gap.
+    panelReducedMotion=false;panel.render(data);panel.selectPage('home');await wait(500);
+    const [leadPill,trailPill]=panel.node.querySelectorAll('.notch-tab-pill');
+    const opacity=n=>Number(getComputedStyle(n).opacity),x=n=>new DOMMatrix(getComputedStyle(n).transform).m41;
+    panel.selectPage('limits');await wait(40);
+    check('same-lane-pill-keeps-existing-spring',leadPill.getAnimations().some(a=>a.transitionProperty==='transform')&&Math.abs(x(leadPill)-36)>1);
+    await wait(500);panel.selectPage('plugin:'+refs[2]);await wait(40);
+    const entering=opacity(trailPill);
+    check('cross-lane-arrival-fades-instead-of-jumping',entering>0&&entering<1,{opacity:entering});
+    check('cross-lane-departure-fades',opacity(leadPill)>0&&opacity(leadPill)<1,{opacity:opacity(leadPill)});
+    check('cross-lane-arrival-already-at-target-slot',Math.abs(x(trailPill)-36)<.01&&!trailPill.getAnimations().some(a=>a.transitionProperty==='transform'));
+    panel.render(data);await wait(25);
+    check('live-push-preserves-cross-lane-transition',opacity(trailPill)>entering&&opacity(trailPill)<1,{before:entering,after:opacity(trailPill)});
+    await wait(240);check('cross-lane-settles-to-one-highlight',opacity(trailPill)===1&&opacity(leadPill)===0);
+    panel.selectPage('sessions');await wait(40);
+    check('reverse-cross-lane-also-fades-at-target-slot',opacity(leadPill)>0&&opacity(leadPill)<1&&Math.abs(x(leadPill)-72)<.01);
+    panel.selectPage('plugin:'+refs[1]);await wait(30);panel.selectPage('home');await wait(260);
+    check('rapid-cross-lane-reversal-keeps-latest-selection',panel.view.page==='home'&&opacity(leadPill)===1&&opacity(trailPill)===0&&tabs().filter(n=>n.tabIndex===0).length===1);
+    panelReducedMotion=true;panel.render(data);panel.selectPage('plugin:'+refs[2]);await wait(20);
+    check('reduced-motion-cross-lane-switch-is-immediate',opacity(trailPill)===1&&opacity(leadPill)===0&&leadPill.getAnimations().length===0&&trailPill.getAnimations().length===0);
     const focusedTab=tabs().at(-1);focusedTab.focus();panel.render(data);await wait(20);check('tab-focus-survives-live-push',document.activeElement===focusedTab);
     const compactTabs=seen();data.cells[0].rate=88888;panel.render(data);await wait(25);check('first-large-reading-keeps-tab-capacity',seen()===compactTabs,{before:compactTabs,after:seen()});data.cells[0].rate=28;panel.render(data);
     // All nine plugin pages: the trailing lane (or, if too thin, the leading
