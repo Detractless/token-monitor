@@ -77,10 +77,9 @@ for (const point of ['prepared', 'old-moved', 'new-moved', 'registry-written', '
 }
 test('startup recovers a transaction interrupted by actual process termination', t => {
   const f = fixture(t); f.install('1.0.0');
-  const modulePath = require.resolve('../../src/electron/plugins/managed');
-  const packagePath = require.resolve('../../src/electron/plugins/package');
-  const child = spawnSync(process.execPath, ['-e', `const {createManagedPlugins}=require(${JSON.stringify(modulePath)}); const {parsePackage}=require(${JSON.stringify(packagePath)});
-    const api=createManagedPlugins({root:${JSON.stringify(f.args.root)},userDir:${JSON.stringify(f.args.userDir)},dataDir:${JSON.stringify(f.args.dataDir)},getSettings:()=>({pluginStates:{}}),saveSettings:()=>{},manager:{list:()=>({plugins:[]}),beginMutation(){},endMutation(){},reload(){}},fault:step=>{if(step==='new-moved')process.exit(87)}}); api.recover(); api.install(api.preview(parsePackage(${JSON.stringify(bytes('2.0.0').toString())})).token);`]);
+  const child = spawnSync(process.execPath, [path.join(__dirname, '../fixtures/pluginManagedInterrupt.js')], {
+    input: JSON.stringify({ root: f.args.root, userDir: f.args.userDir, dataDir: f.args.dataDir, package: bytes('2.0.0').toString() })
+  });
   assert.equal(child.status, 87, child.stderr.toString());
   const recovered = createManagedPlugins(f.args); recovered.recover();
   assert.equal(recovered.describe('test-plugin').version, '1.0.0');

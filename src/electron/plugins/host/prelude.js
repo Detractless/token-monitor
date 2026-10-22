@@ -51,7 +51,7 @@
     } else if (message.type === 'interaction') {
       actions = actions.then(async () => {
         const handler = actionHandlers.get(message.event?.action);
-        if (handler) await handler({ ...message.event, view: message.view, surface: message.surface });
+        if (typeof handler === 'function') await handler({ ...message.event, view: message.view, surface: message.surface });
       }).catch(report).finally(() => post({ type: 'interaction-done', seq: message.seq }));
     } else if (message.type === 'data') {
       latest.set(message.source, message.value);

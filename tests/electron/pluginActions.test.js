@@ -8,10 +8,11 @@ test('Worker actions serialize async handlers, acknowledge errors and continue t
   self.tm.onAction('first', async event => { events.push(event.surface); await gate; events.push('released'); });
   self.tm.onAction('bad', () => { throw new Error('broken action'); });
   self.tm.onAction('last', () => events.push('last'));
-  for (const [index, action] of ['first', 'bad', 'last'].entries()) await listeners.message({ data: { type: 'interaction', seq: index + 1, view: 'test', surface: 'page', event: { action, type: 'press' } } });
+  self.tm.onAction('not-callable', {});
+  for (const [index, action] of ['first', 'bad', 'last', '__proto__', 'not-callable'].entries()) await listeners.message({ data: { type: 'interaction', seq: index + 1, view: 'test', surface: 'page', event: { action, type: 'press' } } });
   assert.deepEqual(events, ['page']); release(); await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(events, ['page', 'released', 'last']);
-  assert.deepEqual(messages.filter(m => m.type === 'interaction-done').map(m => m.seq), [1, 2, 3]);
+  assert.deepEqual(messages.filter(m => m.type === 'interaction-done').map(m => m.seq), [1, 2, 3, 4, 5]);
   assert(messages.some(m => m.type === 'error' && m.message.includes('broken action')));
 });
 test('Sketch Pad restores saved content and keeps drawing output within budgets', async () => {
