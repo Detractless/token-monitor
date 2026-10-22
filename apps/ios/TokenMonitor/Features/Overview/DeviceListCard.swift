@@ -3,6 +3,7 @@ import SwiftUI
 struct DeviceListCard: View {
     let devices: [DeviceSnapshot]
     let period: UsagePeriodKey
+    var limit = 4
 
     var body: some View {
         if devices.isEmpty {
@@ -14,7 +15,7 @@ struct DeviceListCard: View {
                 if active.isEmpty {
                     Text("No device usage in this period").font(.subheadline).foregroundStyle(.secondary)
                 }
-                ForEach(Array(active.prefix(4).enumerated()), id: \.element.id) { index, device in
+                ForEach(Array(active.prefix(limit).enumerated()), id: \.element.id) { index, device in
                     if index > 0 { Divider() }
                     DeviceRow(device: device, period: period)
                 }

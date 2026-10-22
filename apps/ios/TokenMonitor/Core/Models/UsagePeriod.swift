@@ -21,6 +21,7 @@ nonisolated struct UsagePeriod: Decodable, Sendable {
     var unpricedTokens: Double? = nil
     var clientUnpricedTokens: [String: Double]? = nil
     var modelUnpricedTokens: [String: Double]? = nil
+    var modelThroughput: [String: ModelThroughput]? = nil
 
     struct Capabilities: Decodable, Sendable {
         let tokenComponents: Bool?

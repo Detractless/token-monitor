@@ -104,6 +104,14 @@ struct SettingsView: View {
                 }
             }
 
+            Section {
+                NavigationLink {
+                    SubscriptionsView()
+                } label: {
+                    Label(String(localized: "Subscriptions", table: "AppAlignment"), systemImage: "creditcard")
+                }
+            }
+
             Section("Information") {
                 NavigationLink {
                     settingsPage("Privacy") { privacySection }
@@ -266,6 +274,7 @@ struct SettingsView: View {
                         .foregroundStyle(DesignTokens.accent)
                 }
             }
+            HomeCountControls()
             Toggle("Live speed", isOn: $preferences.showsLiveTokenRate)
             NavigationLink {
                 OverviewSectionOrderEditor()

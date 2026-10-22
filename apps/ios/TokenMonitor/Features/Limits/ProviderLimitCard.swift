@@ -64,6 +64,7 @@ struct ProviderLimitCard: View {
                 freshnessLine(provider)
             }
             windows(for: provider)
+            ProviderSpendRow(provider: provider)
             if let credits = provider.resetCredits {
                 ResetCreditsRow(credits: credits)
             }
@@ -186,6 +187,7 @@ private struct LimitAccountSection: View {
                     windows: provider.displayWindows
                 )
             }
+            ProviderSpendRow(provider: provider)
             if let credits = provider.resetCredits {
                 ResetCreditsRow(credits: credits)
             }

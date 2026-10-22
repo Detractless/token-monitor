@@ -7,6 +7,7 @@ struct OverviewView: View {
 
     @Binding var selectedTab: AppTab
     @State private var showsOrderEditor = false
+    @State private var showsLiveModels = false
     @State private var surfaceStatus = SystemSurfaceStatus()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -39,6 +40,7 @@ struct OverviewView: View {
                                         grokBotIDs: SessionListEntry.grokBotIDs(
                                             stats.periods ?? [:],
                                             authoritative: stats.grokBotSessionIds),
+                                        limit: preferences.homeCount("session"),
                                         showAll: showSessions
                                     )
                                 case .trend:
@@ -51,7 +53,7 @@ struct OverviewView: View {
                                         BreakdownCard(
                                             kind: .tool,
                                             entries: store.currentPeriod.clientEntries,
-                                            total: store.currentPeriod.totalTokens ?? 0, limit: 3
+                                            total: store.currentPeriod.totalTokens ?? 0, limit: preferences.homeCount("tool")
                                         )
                                     }
                                 case .models:
@@ -59,7 +61,7 @@ struct OverviewView: View {
                                         BreakdownCard(
                                             kind: .model,
                                             entries: store.currentPeriod.modelEntries,
-                                            total: store.currentPeriod.totalTokens ?? 0, limit: 3
+                                            total: store.currentPeriod.totalTokens ?? 0, limit: preferences.homeCount("model")
                                         )
                                     }
                                 case .devices:
@@ -68,7 +70,7 @@ struct OverviewView: View {
                                             SectionNavigationLink(title: "Devices") { DevicesView() }
                                         }
                                         SurfaceCard {
-                                            DeviceListCard(devices: stats.usageDevices(for: store.selectedPeriod), period: store.selectedPeriod)
+                                            DeviceListCard(devices: stats.usageDevices(for: store.selectedPeriod), period: store.selectedPeriod, limit: preferences.homeCount("device"))
                                         }
                                     }
                                 }
@@ -133,7 +135,20 @@ struct OverviewView: View {
         .modifier(RootPageHeader("Overview", brandMark: "Σ.") {
             if preferences.showsLiveTokenRate {
                 TimelineView(.periodic(from: .now, by: 2)) { timeline in
-                    LiveSpeedBadge(reading: store.liveOutputRate(at: timeline.date))
+                    Button { showsLiveModels = true } label: {
+                        LiveSpeedBadge(reading: store.liveOutputRate(at: timeline.date))
+                            .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(String(localized: "Show live speed by model", table: "AppAlignment"))
+                    .popover(isPresented: $showsLiveModels) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            PopoverHeader("Models")
+                            ModelLiveRatesView()
+                        }
+                        .padding(16).frame(idealWidth: 300, maxWidth: 340)
+                        .presentationCompactAdaptation(.popover)
+                    }
                 }
             }
         } controls: {

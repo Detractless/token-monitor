@@ -276,3 +276,33 @@ extension TokenMonitorStoreTests {
         #expect(controller.errorMessage == String(localized: "Connect to a Hub before starting Live Activity."))
     }
 }
+
+extension TokenMonitorStoreTests {
+    @Test func liveModelAliasesFoldMatchedCountersWithoutMutatingWireData() async throws {
+        let client = ControlledHubClient(holdAliases: true)
+        let store = TokenMonitorStore(client: client, systemSurfaces: RecordingSurfaces())
+        let destination = configuration("model-rate-alias")
+        defer { store.configure(nil) }
+        func snapshot(_ multiplier: Int) throws -> HubStats {
+            try JSONDecoder().decode(HubStats.self, from: Data("""
+            {"periods":{"today":{"models":{"vendor/a":100,"vendor/b":300},"timedTokens":\(400 * multiplier),"timedOutputTokens":\(400 * multiplier),"timedDurationMs":\(3000 * multiplier),"modelThroughput":{"vendor/a":{"timedTokens":\(100 * multiplier),"timedOutputTokens":\(100 * multiplier),"timedDurationMs":\(1000 * multiplier)},"vendor/b":{"timedTokens":\(300 * multiplier),"timedOutputTokens":\(300 * multiplier),"timedDurationMs":\(2000 * multiplier)}}}}}
+            """.utf8))
+        }
+        store.configure(destination)
+        try #require(await coreEventually { await client.requestCount == 1 })
+        await client.complete(0, try snapshot(1))
+        try #require(await coreEventually {
+            let aliases = await client.aliasCount
+            let streams = await client.streamCount
+            return aliases == 1 && streams == 1
+        })
+        await client.completeAliases(0, .init(revision: 1, value: .init(modelAliases: ["vendor/a": "Shared", "vendor/b": "Shared"])))
+        try #require(await coreEventually { store.currentPeriod.models?["Shared"] == 400 })
+        await client.send(try snapshot(2), to: destination)
+        try #require(await coreEventually { store.liveModelOutputRate()?.devices.first?.models.count == 1 })
+        let model = try #require(store.liveModelOutputRate()?.devices.first?.models.first)
+        #expect(model.id == "Shared")
+        #expect(abs(model.tokensPerSecond - 400.0 / 3) < 0.0001)
+        #expect(store.stats?.period(.today).modelThroughput?["vendor/a"]?.timedOutputTokens == 200)
+    }
+}

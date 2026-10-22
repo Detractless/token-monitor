@@ -4,11 +4,13 @@ nonisolated protocol HubDataClient: Sendable {
     func fetchStats(configuration: HubConfiguration) async throws -> HubStats
     func fetchHistory(configuration: HubConfiguration) async throws -> UsageHistory
     func fetchModelAliases(configuration: HubConfiguration) async throws -> ModelAliasDocument?
+    func fetchSubscriptions(configuration: HubConfiguration) async throws -> SubscriptionDocument?
     func statsStream(configuration: HubConfiguration) async -> AsyncThrowingStream<HubStats, any Error>
 }
 
 extension HubDataClient {
     func fetchModelAliases(configuration: HubConfiguration) async throws -> ModelAliasDocument? { nil }
+    func fetchSubscriptions(configuration: HubConfiguration) async throws -> SubscriptionDocument? { nil }
 }
 
 nonisolated protocol LiveActivityClient: Sendable {
@@ -61,6 +63,12 @@ actor HubClient: HubDataClient, LiveActivityClient {
         } catch HubClientError.httpStatus(404) {
             return nil
         }
+    }
+
+    func fetchSubscriptions(configuration: HubConfiguration) async throws -> SubscriptionDocument? {
+        do {
+            return try await fetch(SubscriptionDocument.self, path: "api/subscriptions", configuration: configuration)
+        } catch HubClientError.httpStatus(404) { return nil }
     }
 
     func registerLiveActivity(

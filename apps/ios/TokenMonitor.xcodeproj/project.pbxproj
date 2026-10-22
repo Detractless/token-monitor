@@ -7,6 +7,19 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		6CD74ABCA4474BAF78FB5DF6 /* AppAlignment.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = CE62F50C31A95E10D40DFA17 /* AppAlignment.xcstrings */; };
+		A2EC73D10BDC4F021AF9EA94 /* MainAlignmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5215FFDDD541B836469AA618 /* MainAlignmentTests.swift */; };
+		7032DF86E812762717B3F438 /* LiveTokenRateTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA051F2CD1A72F419BCD061 /* LiveTokenRateTracker.swift */; };
+		7815ED9DF1CDB79C1BA2A987 /* SubscriptionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFF9F65C5CB847C57769D9DA /* SubscriptionStore.swift */; };
+		CD8F3E4FF5BE52E2D4686952 /* ModelThroughput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A6C5A0B96B3EE8CAEC05182 /* ModelThroughput.swift */; };
+		3D0F0D7269C15BA16DD52819 /* SubscriptionDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11175E57A0700C4B520D5BF7 /* SubscriptionDocument.swift */; };
+		5E7DC6B1CF72872D144296F7 /* SharedSubscription.swift in Sources */ = {isa = PBXBuildFile; fileRef = 729FC4F9AB27241F077363B2 /* SharedSubscription.swift */; };
+		3C52F62970182F3F4DCAFCDB /* ProviderSpendRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 489664EFE7C8C6F9D23E90BA /* ProviderSpendRow.swift */; };
+		840DBBC77A1D1921F8142879 /* HomeCountControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = B69D73D3D4C3DAF145EEF77A /* HomeCountControls.swift */; };
+		EAA7CDD1C02D9041EBE3496C /* SubscriptionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8425E745D9716E07E12853D /* SubscriptionsView.swift */; };
+		75BB4E12D9BECF4581CB8DE5 /* SubscriptionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7348B5DFAB8B8742555C04CF /* SubscriptionDetailView.swift */; };
+		AA199BDC3F17C73BA3D57E5A /* SubscriptionRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBDCBAE53C950F3E56EE73B1 /* SubscriptionRow.swift */; };
+		FD6B591F77B3C219E9EC2640 /* ModelLiveRatesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 085D40311E27CA6334E1E037 /* ModelLiveRatesView.swift */; };
 		DCA300000000000000000002 /* PopoverHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA300000000000000000001 /* PopoverHeader.swift */; };
 		014B39BA70826BD1E946E54A /* DeviceListCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0202B69BD46AFA44BDFD05B /* DeviceListCard.swift */; };
 		01942276D4783199323D77C2 /* SurfaceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3178094369BAA5B3858309E4 /* SurfaceCard.swift */; };
@@ -216,6 +229,19 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		CE62F50C31A95E10D40DFA17 /* AppAlignment.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = "AppAlignment.xcstrings"; sourceTree = "<group>"; };
+		5215FFDDD541B836469AA618 /* MainAlignmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MainAlignmentTests.swift"; sourceTree = "<group>"; };
+		DEA051F2CD1A72F419BCD061 /* LiveTokenRateTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "LiveTokenRateTracker.swift"; sourceTree = "<group>"; };
+		CFF9F65C5CB847C57769D9DA /* SubscriptionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SubscriptionStore.swift"; sourceTree = "<group>"; };
+		5A6C5A0B96B3EE8CAEC05182 /* ModelThroughput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ModelThroughput.swift"; sourceTree = "<group>"; };
+		11175E57A0700C4B520D5BF7 /* SubscriptionDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SubscriptionDocument.swift"; sourceTree = "<group>"; };
+		729FC4F9AB27241F077363B2 /* SharedSubscription.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SharedSubscription.swift"; sourceTree = "<group>"; };
+		489664EFE7C8C6F9D23E90BA /* ProviderSpendRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProviderSpendRow.swift"; sourceTree = "<group>"; };
+		B69D73D3D4C3DAF145EEF77A /* HomeCountControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HomeCountControls.swift"; sourceTree = "<group>"; };
+		F8425E745D9716E07E12853D /* SubscriptionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SubscriptionsView.swift"; sourceTree = "<group>"; };
+		7348B5DFAB8B8742555C04CF /* SubscriptionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SubscriptionDetailView.swift"; sourceTree = "<group>"; };
+		FBDCBAE53C950F3E56EE73B1 /* SubscriptionRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SubscriptionRow.swift"; sourceTree = "<group>"; };
+		085D40311E27CA6334E1E037 /* ModelLiveRatesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ModelLiveRatesView.swift"; sourceTree = "<group>"; };
 		DCA300000000000000000001 /* PopoverHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverHeader.swift; sourceTree = "<group>"; };
 		0011336A905F5CC4BE2CBEF9 /* LimitPreviewSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitPreviewSection.swift; sourceTree = "<group>"; };
 		018B7CE8DB6ACDBED2F6C8B8 /* Date+Hub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Date+Hub.swift"; sourceTree = "<group>"; };
@@ -384,6 +410,9 @@
 		0225BB732D7CFD362C137524 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				5A6C5A0B96B3EE8CAEC05182 /* ModelThroughput.swift */,
+				11175E57A0700C4B520D5BF7 /* SubscriptionDocument.swift */,
+				729FC4F9AB27241F077363B2 /* SharedSubscription.swift */,
 				9D2DB1A0AE60BE0653249C10 /* BreakdownEntry.swift */,
 				3F17C2BBD25309E790584A34 /* DeviceSnapshot.swift */,
 				0E4BC91B45C270E40519F8CA /* HistoryDay.swift */,
@@ -412,6 +441,8 @@
 		06E0F5CCD9F48B22E5CF1AB5 /* State */ = {
 			isa = PBXGroup;
 			children = (
+				DEA051F2CD1A72F419BCD061 /* LiveTokenRateTracker.swift */,
+				CFF9F65C5CB847C57769D9DA /* SubscriptionStore.swift */,
 				110000000000000000000003 /* AppAppearance.swift */,
 				110000000000000000000033 /* AppCurrency.swift */,
 				110000000000000000000034 /* AppLanguage.swift */,
@@ -428,6 +459,7 @@
 		09C15EE9C0B7D0606A17B164 /* TokenMonitorTests */ = {
 			isa = PBXGroup;
 			children = (
+				5215FFDDD541B836469AA618 /* MainAlignmentTests.swift */,
 				8EAABE2993B014DE0B472F43 /* TokenMonitorStoreTests.swift */,
 				7559F17E1F57D6559528151D /* SystemSurfaceCoordinatorTests.swift */,
 				80B3D026387241393F6C526C /* LiveActivityRegistrationTests.swift */,
@@ -544,6 +576,7 @@
 		76C75215FF3A559B5D8AD15D /* Limits */ = {
 			isa = PBXGroup;
 			children = (
+				489664EFE7C8C6F9D23E90BA /* ProviderSpendRow.swift */,
 				120000000000000000000047 /* LimitProviderOrderEditor.swift */,
 				688BF62BE23B46A2E27A160F /* LimitsView.swift */,
 				740427D2593A45BA914D2AC6 /* LimitWindowRow.swift */,
@@ -576,6 +609,7 @@
 		B5259151C4328942E9A7144F /* Settings */ = {
 			isa = PBXGroup;
 			children = (
+				B69D73D3D4C3DAF145EEF77A /* HomeCountControls.swift */,
 				110000000000000000000043 /* LiveActivityCustomizerView.swift */,
 				3344AB257C48E4C2CB0B0B01 /* SettingsView.swift */,
 				B7E2000000000000000000F9 /* WidgetSettingsView.swift */,
@@ -607,6 +641,10 @@
 		DA913478CA918FEB2DA29615 /* Insights */ = {
 			isa = PBXGroup;
 			children = (
+				F8425E745D9716E07E12853D /* SubscriptionsView.swift */,
+				7348B5DFAB8B8742555C04CF /* SubscriptionDetailView.swift */,
+				FBDCBAE53C950F3E56EE73B1 /* SubscriptionRow.swift */,
+				085D40311E27CA6334E1E037 /* ModelLiveRatesView.swift */,
 				11000000000000000000000B /* ActivityHeatmap.swift */,
 				3FFE7EE75F16179ECE1092E4 /* BreakdownCard.swift */,
 				110000000000000000000035 /* BreakdownDetailView.swift */,
@@ -677,6 +715,7 @@
 		F5BF7D03C052D45A3D1879C1 /* TokenMonitor */ = {
 			isa = PBXGroup;
 			children = (
+				CE62F50C31A95E10D40DFA17 /* AppAlignment.xcstrings */,
 				A6C1B422D40168D8CDB5A641 /* SystemSurfaceFittedPreview.swift */,
 				6F0307C2F462793909A9EC8E /* SystemSurfaceStatus.swift */,
 				5F732C52CC7FA2C77E14DEBA /* SystemSurfacesSection.swift */,
@@ -821,6 +860,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6CD74ABCA4474BAF78FB5DF6 /* AppAlignment.xcstrings in Resources */,
 				E71021000000000000000100 /* Config PrivacyInfo.xcprivacy in Resources */,
 				C8CFD16EF10BAD97C64842DC /* Assets.xcassets in Resources */,
 				DCA200000000000000000002 /* DesktopNavigation.LICENSE.txt in Resources */,
@@ -836,6 +876,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A2EC73D10BDC4F021AF9EA94 /* MainAlignmentTests.swift in Sources */,
 				44AA5EFAB278F352F5908652 /* TokenMonitorStoreTests.swift in Sources */,
 				2A377900BF4D26C7B2FFC9B6 /* SystemSurfaceCoordinatorTests.swift in Sources */,
 				2E42BB9BF22D5EE202F5D0B5 /* LiveActivityRegistrationTests.swift in Sources */,
@@ -895,6 +936,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7032DF86E812762717B3F438 /* LiveTokenRateTracker.swift in Sources */,
+				7815ED9DF1CDB79C1BA2A987 /* SubscriptionStore.swift in Sources */,
+				CD8F3E4FF5BE52E2D4686952 /* ModelThroughput.swift in Sources */,
+				3D0F0D7269C15BA16DD52819 /* SubscriptionDocument.swift in Sources */,
+				5E7DC6B1CF72872D144296F7 /* SharedSubscription.swift in Sources */,
+				3C52F62970182F3F4DCAFCDB /* ProviderSpendRow.swift in Sources */,
+				840DBBC77A1D1921F8142879 /* HomeCountControls.swift in Sources */,
+				EAA7CDD1C02D9041EBE3496C /* SubscriptionsView.swift in Sources */,
+				75BB4E12D9BECF4581CB8DE5 /* SubscriptionDetailView.swift in Sources */,
+				AA199BDC3F17C73BA3D57E5A /* SubscriptionRow.swift in Sources */,
+				FD6B591F77B3C219E9EC2640 /* ModelLiveRatesView.swift in Sources */,
 				FA9BD55CAA4232A5C0312D11 /* SystemSurfaceFittedPreview.swift in Sources */,
 				6D4406116C74ABF197EA2480 /* SystemSurfaceStatus.swift in Sources */,
 				9ACF7A8DE9C6A25D19C7C3A6 /* SystemSurfacesSection.swift in Sources */,

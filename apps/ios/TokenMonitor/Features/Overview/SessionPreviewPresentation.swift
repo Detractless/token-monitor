@@ -15,7 +15,12 @@ nonisolated enum SessionPreviewPresentation {
     ) -> [SessionListEntry] {
         let entries = SessionListEntry.rows(sessions, activity: activity, grokBotIDs: grokBotIDs, now: now)
             .filter { $0.group == nil }
-        return Array(entries.sorted { precedes($0, $1, now: now) }.prefix(limit))
+        let sorted = entries.sorted { precedes($0, $1, now: now) }
+        // The count limits inactive previews; active work stays visible beyond it.
+        return sorted.enumerated().compactMap { index, entry in
+            index < max(1, min(50, limit)) || entry.activityState(at: now) == .running
+                || entry.activityState(at: now) == .waiting ? entry : nil
+        }
     }
 
     /// Running entries across the whole eligible set — a group counts once

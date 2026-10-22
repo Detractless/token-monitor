@@ -11,6 +11,7 @@ nonisolated struct HubStats: Decodable, Sendable {
     let projectsIncomplete: Bool?
     var syncSettingsRevisions: [String: Int]? = nil
     var grokBotSessionIds: [String]? = nil
+    var subscriptionsUpdatedAt: String? = nil
 
     func sourceUpdatedAt(now: Date = .now) -> Date? {
         let sources = devices ?? []

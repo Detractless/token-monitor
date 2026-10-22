@@ -6,6 +6,7 @@ import Observation
 final class TokenMonitorStore {
     var stats: HubStats?
     var history: UsageHistory?
+    let subscriptions: SubscriptionStore
     var phase: ConnectionPhase = .idle {
         didSet { updateConnectionNotice() }
     }
@@ -50,6 +51,7 @@ final class TokenMonitorStore {
     ) {
         self.connectionNoticeDelay = connectionNoticeDelay
         self.client = client
+        self.subscriptions = SubscriptionStore(client: client)
         self.systemSurfaces = systemSurfaces
     }
 
@@ -104,6 +106,25 @@ final class TokenMonitorStore {
     func liveOutputRate(at date: Date = .now) -> LiveTokenRateTracker.Reading? {
         guard stats != nil else { return nil }
         return liveRateTracker.reading(at: date)
+    }
+
+    func liveModelOutputRate(at date: Date = .now) -> LiveTokenRateTracker.Reading? {
+        guard let reading = liveOutputRate(at: date) else { return nil }
+        let ids = reading.devices.flatMap { $0.models.map(\.id) }
+        let allIDs = ids + (stats?.periods ?? [:]).values.flatMap { Array(($0.models ?? [:]).keys) }
+        let resolver = modelAliases.resolver(modelIDs: allIDs)
+        let devices = reading.devices.map { device in
+            let folded = Dictionary(grouping: device.models) { resolver[$0.id] ?? $0.id }
+            return LiveTokenRateTracker.DeviceReading(id: device.id, name: device.name,
+                models: folded.map { id, values in
+                    let output = values.reduce(0) { $0 + $1.timedOutput }
+                    let duration = values.reduce(0) { $0 + $1.timedDuration }
+                    return .init(id: id, tokensPerSecond: duration > 0 ? min(1e12, output / duration * 1_000) : 0,
+                                 timedOutput: output, timedDuration: duration)
+                }.sorted { $0.id < $1.id })
+        }
+        return .init(tokensPerSecond: reading.tokensPerSecond, isIdle: reading.isIdle,
+                     devices: devices, deviceCount: reading.deviceCount)
     }
 
     private func projectModelNames() {
@@ -179,6 +200,7 @@ final class TokenMonitorStore {
         refreshID = nil
         isRefreshing = false
         self.configuration = configuration
+        subscriptions.configure(configuration)
         aliasTask?.cancel()
         aliasTask = nil
         aliasRequestID = nil
@@ -269,6 +291,7 @@ final class TokenMonitorStore {
         stats = incoming
         projectModelNames()
         syncModelAliases(configuration: configuration, generation: generation)
+        subscriptions.observe(revision: incoming.subscriptionsUpdatedAt)
         phase = .live
         // Publish stats immediately; history must not block fresh usage or widgets.
         await systemSurfaces.publish(stats: incoming, history: currentHistory, configuration: configuration)
@@ -302,100 +325,6 @@ final class TokenMonitorStore {
         }
     }
 
-}
-
-/// The desktop footer measures new timed output between Hub frames. Tracking
-/// each device separately avoids treating a partial fleet upload as one burst.
-struct LiveTokenRateTracker {
-    struct Reading {
-        let tokensPerSecond: Double
-        let isIdle: Bool
-    }
-
-    private struct Counters {
-        let output: Double
-        let durationMs: Double
-
-        init?(_ period: UsagePeriod) {
-            guard period.capabilities?.throughput != false,
-                  let output = period.timedOutputTokens, output.isFinite, output >= 0,
-                  let durationMs = period.timedDurationMs, durationMs.isFinite, durationMs >= 0 else { return nil }
-            self.output = output
-            self.durationMs = durationMs
-        }
-    }
-
-    private struct Sample {
-        let speed: Double
-        let at: Date
-    }
-
-    private var baselines: [String: Counters] = [:]
-    private var samples: [String: Sample] = [:]
-    private var lastDisplay: Sample?
-    private let activeSeconds: TimeInterval = 8
-    private let clearSeconds: TimeInterval = 180
-
-    mutating func reset() {
-        baselines = [:]
-        samples = [:]
-        lastDisplay = nil
-    }
-
-    mutating func observe(_ stats: HubStats, at now: Date) {
-        let entries: [(String, UsagePeriod)]
-        if let devices = stats.devices, !devices.isEmpty {
-            entries = devices.filter { $0.stale != true }.map { ($0.id, $0.period(.today)) }
-        } else {
-            entries = [("aggregate", stats.period(.today))]
-        }
-        let present = Set(entries.map(\.0))
-        baselines = baselines.filter { present.contains($0.key) }
-        samples = samples.filter { present.contains($0.key) }
-
-        for (id, period) in entries {
-            guard let current = Counters(period) else {
-                baselines.removeValue(forKey: id)
-                samples.removeValue(forKey: id)
-                continue
-            }
-            defer { baselines[id] = current }
-            guard let previous = baselines[id] else { continue }
-            let output = current.output - previous.output
-            let duration = current.durationMs - previous.durationMs
-            if output < 0 || duration < 0 {
-                samples.removeValue(forKey: id)
-                lastDisplay = nil
-                continue
-            }
-            guard duration > 0 else { continue }
-            samples[id] = Sample(speed: min(1e12, output * 1_000 / duration), at: now)
-        }
-
-        let active = activeSamples(at: now)
-        if !active.isEmpty {
-            lastDisplay = Sample(
-                speed: min(1e12, active.reduce(0) { $0 + $1.speed }),
-                at: active.map(\.at).max() ?? now
-            )
-        }
-    }
-
-    func reading(at now: Date) -> Reading? {
-        let active = activeSamples(at: now)
-        if !active.isEmpty {
-            return Reading(tokensPerSecond: min(1e12, active.reduce(0) { $0 + $1.speed }), isIdle: false)
-        }
-        guard let lastDisplay, now.timeIntervalSince(lastDisplay.at) < clearSeconds else { return nil }
-        return Reading(tokensPerSecond: lastDisplay.speed, isIdle: true)
-    }
-
-    private func activeSamples(at now: Date) -> [Sample] {
-        samples.values.filter {
-            let age = now.timeIntervalSince($0.at)
-            return age >= 0 && age < activeSeconds
-        }
-    }
 }
 
 extension TokenMonitorStore {

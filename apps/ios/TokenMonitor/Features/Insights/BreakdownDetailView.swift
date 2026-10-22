@@ -11,6 +11,9 @@ struct BreakdownDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: DesignTokens.sectionSpacing) {
                     PeriodPicker(selection: $store.selectedPeriod)
+                    if kind == .model {
+                        SurfaceCard { ModelLiveRatesView() }
+                    }
                     if entries.isEmpty {
                         ContentUnavailableView("No breakdown available", systemImage: "chart.bar.xaxis")
                             .padding(.vertical, 56)

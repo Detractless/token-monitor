@@ -45,6 +45,7 @@ The app reads:
 - `GET /api/stats`
 - `GET /api/stats/stream`
 - `GET /api/history`
+- `GET /api/subscriptions` (read-only shared billing records)
 - `POST /api/live-activities/register` and `DELETE /api/live-activities/{activityID}` for ActivityKit push-token registration
 
 The shared secret is sent as a bearer token and is stored in the iOS Keychain. The Hub URL is stored in user defaults.
@@ -67,7 +68,7 @@ The Home Screen gallery offers Liquid Glass, Transparent and Solid widgets with 
 
 Widgets read the latest App Group snapshot. The app publishes while connected, and iOS may run a background refresh; WidgetKit and Background Tasks choose their own update budgets. A widget timeline is not a continuous Hub connection. Remote Live Activity updates require a Hub/Worker built from this iOS branch, APNs configuration and a successful push-token registration. Older Hub builds without `/api/live-activities/register` retain foreground updates but cannot enable remote pushes. Use a Hub/Worker built from the integrated source for remote updates. A simulator build or local Activity update does not verify remote delivery.
 
-The icon-only native tab bar provides Overview, Limits, Sessions, Insights and Settings with Desktop vector artwork and localized accessibility names. Overview adds up to three recent interactive sessions, prioritizing running sessions, and its Sections editor can reorder or hide that block. Sessions deep links open the root tab. Settings keeps Hub first, followed by compact Live Activity and Widgets rows showing their purpose and status. Full previews and controls live in their customizer pages; Widget counts reflect WidgetKit’s current configurations, with unavailable results kept distinct from zero. A dismissible Overview invitation appears when both surfaces are unused.
+The icon-only native tab bar provides Overview, Limits, Sessions, Insights and Settings with Desktop vector artwork and localized accessibility names. Overview defaults to three recent interactive sessions, prioritizing running sessions, and its Sections editor can reorder or hide that block. Sessions deep links open the root tab. Settings keeps Hub first, followed by compact Live Activity and Widgets rows showing their purpose and status. Full previews and controls live in their customizer pages; Widget counts reflect WidgetKit’s current configurations, with unavailable results kept distinct from zero. A dismissible Overview invitation appears when both surfaces are unused.
 
 The Sessions screen shows bounded today/month summaries from authenticated Hub stats, with tool, model and project search. It does not fetch conversation transcripts. Canonical titles appear only if the sending device and Hub have enabled title sync. Omitted session detail is disclosed while aggregate totals remain complete.
 
@@ -109,3 +110,13 @@ The app reads authenticated `/api/sync/settings/modelAliases` and refreshes its 
 History calendar keys are projected into the local calendar for month labels and trend buckets; they retain their UTC representation for existing wire/heatmap projections. Optional `unpricedTokens` survives history decoding, weekly/range cost totals and model-alias folding; a zero known subtotal with missing prices is not shown as free usage. Cached Widget usage retains the Hub frame’s reporting-day key (separate from the last device freshness timestamp) across midnight (legacy caches fall back to their original source timestamp), while credits text keeps the currency balance even when its meter has a percentage.
 
 Live Activity preview samples are isolated from operational snapshots. Starting or updating an activity requires a configured destination and genuine store data; the explicit Debug `--sample-live-activity` fixture remains separate. Sources resolve freshness from their selected quota flag and timestamp, and automatic selection prefers healthy available readings. Explicit account references take priority over provider fillers; local and remote content states enforce the same 3,500-byte budget described in the [API contract](../../docs/API.md#post-apilive-activitiesregister). The Hub reuses `sessionLive.liveActivityExpiryAt` to schedule provider-lease transitions rather than defining another lease duration.
+
+### Desktop feature alignment
+
+Settings → Customize → Overview controls the number of Tools, Models, Sessions and Devices independently (1–50), retaining the native defaults of 3/3/3/4. Running and waiting sessions remain visible beyond the configured preview count. These are local display preferences.
+
+AI Limits shows source-currency Today/Month spending beneath account windows when the Hub supplies balance spend metadata. The details popover includes the other reported periods; unknown periods stay absent and zero stays visible.
+
+Tap the live-speed reading beside the Overview brand, or open Models, to inspect model timing grouped by device. Each device retains concurrent model samples for eight seconds, uses their matched duration for its headline, and falls back to the device delta when attribution is missing or inconsistent. Device rates add across the fleet; model aliases combine matching counters for display. Missing timing has an explicit empty state.
+
+Settings → Subscriptions reads the selected Hub's shared subscription document. Records retain their original currency and billing cadence, account email masking, anchored renewal dates, cancellation boundaries and top-up history. The monthly equivalent uses the Desktop display rates and billing rules, including this calendar month's top-ups. Edit records in Desktop. The app refreshes after authenticated subscription-version changes, keeps failures distinct from an empty list, and clears records on Hub changes. No subscription write endpoint is exposed by iOS.

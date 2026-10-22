@@ -1,19 +1,20 @@
 import SwiftUI
 
-/// Overview preview: up to three sessions from the current display period —
+/// Overview preview: configured recent sessions plus active work from the display period —
 /// running first, then most recent — on the same 30-second activity clock as
 /// the Sessions tab.
 struct SessionsPreviewSection: View {
     let sessions: [String: SessionUsage]
     var activity: [String: LiveSessionActivity]? = nil
     var grokBotIDs: Set<String> = []
+    var limit = 3
     let showAll: () -> Void
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
             let now = timeline.date
             let rows = SessionPreviewPresentation.rows(
-                sessions, activity: activity, grokBotIDs: grokBotIDs, now: now)
+                sessions, activity: activity, grokBotIDs: grokBotIDs, now: now, limit: limit)
             let running = SessionPreviewPresentation.runningCount(
                 sessions, at: now, activity: activity, grokBotIDs: grokBotIDs)
             VStack(alignment: .leading, spacing: DesignTokens.headerToCardSpacing) {

@@ -56,6 +56,18 @@ final class AppPreferences {
         }
     }
 
+    var homeModuleCounts: [String: Int] {
+        didSet { persistLocalPreferences() }
+    }
+
+    func homeCount(_ module: String) -> Int {
+        min(50, max(1, homeModuleCounts[module] ?? (module == "device" ? 4 : 3)))
+    }
+
+    func setHomeCount(_ count: Int, for module: String) {
+        homeModuleCounts[module] = min(50, max(1, count))
+    }
+
     var showsLiveTokenRate: Bool {
         didSet { persistLocalPreferences() }
     }
@@ -172,6 +184,7 @@ final class AppPreferences {
             8,
             max(1, defaults.object(forKey: Keys.homeLimitCount) as? Int ?? 3)
         )
+        homeModuleCounts = defaults.dictionary(forKey: "homeModuleCounts") as? [String: Int] ?? [:]
         showsLiveTokenRate = defaults.object(forKey: Keys.showsLiveTokenRate) as? Bool ?? true
         overviewSectionOrder = defaults.stringArray(forKey: Keys.overviewSectionOrder) ?? []
         hiddenOverviewSections = Set(defaults.stringArray(forKey: Keys.hiddenOverviewSections) ?? [])
@@ -225,6 +238,7 @@ final class AppPreferences {
     private func persistLocalPreferences() {
         defaults.set(appearance.rawValue, forKey: Keys.appearance)
         defaults.set(homeLimitCount, forKey: Keys.homeLimitCount)
+        defaults.set(homeModuleCounts, forKey: "homeModuleCounts")
         defaults.set(showsLiveTokenRate, forKey: Keys.showsLiveTokenRate)
         defaults.set(overviewSectionOrder, forKey: Keys.overviewSectionOrder)
         defaults.set(hiddenOverviewSections.sorted(), forKey: Keys.hiddenOverviewSections)

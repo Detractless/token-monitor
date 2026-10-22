@@ -14,4 +14,17 @@ nonisolated struct ProviderBalance: Decodable, Sendable {
     let planLimit: Double?
     let planPercent: Double?
     let planStatus: String?
+
+    struct Spend {
+        let label: String
+        let amount: Double
+    }
+
+    var spendEntries: [Spend] {
+        [("Today", todaySpend), ("Week", weekSpend), ("Month", monthSpend), ("All time", allTimeSpend)]
+            .compactMap { label, value in
+                guard let value, value.isFinite, value >= 0 else { return nil }
+                return Spend(label: label, amount: value)
+            }
+    }
 }
