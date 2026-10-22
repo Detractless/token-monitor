@@ -258,3 +258,17 @@ test('explicit ring captions carry their own numeric binding without parsing lit
   assert.equal(resolver().resolveNode({ type: 'ring', value: 50, caption: '72%' }).captionNumber, undefined);
   assert.equal(createResolver({ read: () => null, history: () => [], pluginId: 'demo' }).resolveNode(rings[0]).captionNumber, undefined);
 });
+
+test('smooth chart receives measured timestamps and gaps without starting a sampler', () => {
+  const { createDataBus } = require('../../src/shared/plugins/dataBus');
+  const bus = createDataBus();
+  bus.publish('sys.cpu', 10, 1000); bus.publish('sys.cpu', null, 3000); bus.publish('sys.cpu', 30, 25000);
+  const points = bus.historyPoints('sys.cpu', 60);
+  assert.deepEqual(points, [{ at: 1000, value: 10 }, { at: 3000, value: null }, { at: 25000, value: 30 }]);
+  const resolver = createResolver({ read: bus.read, history: bus.history, historyPoints: bus.historyPoints, sourceInterval: () => 2000, pluginId: 'demo' });
+  const result = resolver.resolveNode({ type: 'sparkline', smooth: true, windowMs: 120000, series: { $: 'sys.cpu', history: 60 } });
+  assert.deepEqual(result.seriesPoints, points); assert.equal(result.seriesIntervalMs, 2000);
+  assert.equal(bus.effectiveInterval('sys.cpu'), 0);
+  assert.equal(resolver.resolveNode({ type: 'sparkline', series: [1, 2] }).seriesPoints, undefined);
+  bus.dispose();
+});

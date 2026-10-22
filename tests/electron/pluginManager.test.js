@@ -593,3 +593,23 @@ test('background is opt-in; shared samples stop after hide, disable and removal'
     assert.equal(env.samples(), afterOptOut);
   } finally { env.manager.dispose(); env.bus.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); }
 });
+
+
+test('authored page demand starts its Worker without revoking the document and releases on hide', async t => {
+  const web = { ...CODE, permissions: [...CODE.permissions, 'ui.web', 'tm.pages'], webUi: { version: 1, assets: ['index.html'], documents: [{ id: 'models', entry: 'index.html', target: 'model', slot: 'replace' }] } };
+  const env = setup({ plugins: [web] }); t.after(() => { env.manager.dispose(); env.bus.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); });
+  env.manager.setEnabled('pulse', true);
+  const revision = env.manager.webDocument('pulse/models').revision;
+  assert.equal(env.running.size, 0);
+  env.manager.setWebVisible('page', 'pulse/models');
+  assert.equal(env.running.has('pulse'), true);
+  assert.equal(env.manager.webDocument('pulse/models').revision, revision);
+  assert.equal(env.manager.webReadAllowed('pulse/models', '@tpm'), true);
+  assert.equal(env.manager.webReadAllowed('pulse/models', '@foreign'), false);
+  assert.equal(env.manager.webSource('pulse/models', '@tpm'), 'plugin.pulse.tpm');
+  env.manager.setWebVisible('page', null);
+  await env.clock.advance(31_000);
+  assert.equal(env.running.size, 0);
+  env.manager.reload();
+  assert.notEqual(env.manager.webDocument('pulse/models').revision, revision);
+});

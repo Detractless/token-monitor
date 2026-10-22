@@ -156,9 +156,42 @@
     const root = svg(document, 'svg', { viewBox: `0 0 ${width} ${height}`, preserveAspectRatio: 'none', class: `pv-sparkline ${toneClass(node.tone || 'chart')}` });
     root.style.height = `${height}px`;
     const { line, area } = seriesPath(node.series || [], width, height, node.min, node.max);
-    if (node.fill && area) root.append(svg(document, 'path', { d: area, class: 'pv-sparkline-area' }));
-    if (line) root.append(svg(document, 'path', { d: line, class: 'pv-sparkline-line', 'vector-effect': 'non-scaling-stroke' }));
+    if (node.smooth && Array.isArray(node.seriesPoints) && node.seriesPoints.length) {
+      root._pvChart = node;
+      root.style.overflow = 'hidden';
+    }
+    if (node.fill && (area || root._pvChart)) root.append(svg(document, 'path', { d: area, class: 'pv-sparkline-area' }));
+    if (line || root._pvChart) root.append(svg(document, 'path', { d: line, class: 'pv-sparkline-line', 'vector-effect': 'non-scaling-stroke' }));
     return root;
+  }
+
+  function prepareChart(root) {
+    const node = root._pvChart;
+    if (!node) return;
+    const points = node.seriesPoints.filter(p => Number.isFinite(p.at));
+    const at = points.at(-1)?.at;
+    if (!Number.isFinite(at)) return;
+    const height = node.height || 32, windowMs = node.windowMs || 120000;
+    const values = points.map(p => p.value).filter(Number.isFinite);
+    const low = finite(node.min) ?? Math.min(0, ...values), high = finite(node.max) ?? Math.max(1, ...values);
+    const span = Math.max(1, high - low);
+    let line = '', area = '', start = 0, last = 0, previous = null, open = false;
+    const close = () => { if (open) area += `L${last} ${height}L${start} ${height}Z`; open = false; };
+    for (const point of points) {
+      if (previous !== null && (point.at <= previous || point.at - previous > Math.max(15000, node.seriesIntervalMs * 3))) close();
+      previous = point.at;
+      if (!Number.isFinite(point.value)) { close(); continue; }
+      const x = 100 * (1 - (at - point.at) / windowMs);
+      const y = height - 1 - (Math.max(low, Math.min(high, point.value)) - low) / span * (height - 2);
+      const segment = `${open ? 'L' : 'M'}${x.toFixed(4)} ${y.toFixed(4)}`;
+      line += segment; area += segment;
+      if (!open) start = x;
+      last = x; open = true;
+    }
+    close();
+    root.querySelector('.pv-sparkline-line')?.setAttribute('d', line);
+    root.querySelector('.pv-sparkline-area')?.setAttribute('d', area);
+    root._pvChartAt = at;
   }
 
   function renderBars(document, node) {
@@ -454,7 +487,7 @@
   // Tracks where each view is mounted on one page, keeps the latest payload
   // per surface, repaints mounted nodes in place on every push and reports
   // which refs are actually visible so main samples nothing else.
-  function createPluginViewHost({ document, window, t, onDemand = () => {}, onInteraction, isSurfaceActive = () => true, motionAllowed = () => false, motionMode = () => 'roll' }) {
+  function createPluginViewHost({ document, window, t, onDemand = () => {}, onInteraction, onMount, onPaint, isSurfaceActive = () => true, motionAllowed = () => false, motionMode = () => 'roll' }) {
     const latest = new Map();
     let appearance = {};
     const mounts = new Map();
@@ -479,12 +512,42 @@
     function canMove(mount) {
       return motionAllowed() && document.visibilityState !== 'hidden' && isSurfaceActive(mount.surface) && isVisible(mount.container);
     }
+    let chartFrame = 0, chartEpoch = Date.now(), chartStart = window?.performance?.now() || 0;
+    function chartClock() {
+      const mono = window?.performance?.now() || 0, wall = Date.now();
+      const estimate = chartEpoch + mono - chartStart;
+      if (Math.abs(wall - estimate) > 1000) { chartEpoch = wall; chartStart = mono; return wall; }
+      return estimate;
+    }
+    function animateCharts() {
+      if (chartFrame) { window.cancelAnimationFrame(chartFrame); chartFrame = 0; }
+      const now = chartClock();
+      let moving = false;
+      for (const mount of mounts.values()) {
+        let count = 0;
+        for (const root of mount.container.querySelectorAll?.('.pv-sparkline') || []) {
+          const node = root._pvChart, at = root._pvChartAt;
+          if (!node || !Number.isFinite(at)) continue;
+          const allowed = ++count <= 16 && canMove(mount) && !root.closest('[data-pv-motion="none"]');
+          const end = allowed ? Math.min(at, now - (node.seriesIntervalMs || 2000) - 250) : at;
+          // Never extrapolate samples or animate a stale/future clock epoch.
+          const offset = allowed && at <= now + 1000 ? Math.max(0, Math.min(node.windowMs || 120000, at - end)) : 0;
+          for (const path of root.querySelectorAll('path')) path.setAttribute('transform', `translate(${(100 * offset / (node.windowMs || 120000)).toFixed(4)} 0)`);
+          moving ||= offset > 0;
+        }
+      }
+      if (moving && window?.requestAnimationFrame) chartFrame = window.requestAnimationFrame(animateCharts);
+    }
     function refreshMotion() {
       for (const mount of mounts.values()) if (!canMove(mount) || mount.motionMode !== motionMode()) mount.roller?.settle();
+      animateCharts();
     }
     function paint(mount) {
       const snapshot = mount.roller?.capture(mount.container);
+      onPaint?.(mount);
       paintContent(mount);
+      for (const chart of mount.container.querySelectorAll?.('.pv-sparkline') || []) prepareChart(chart);
+      animateCharts();
       const state = stateFor(mount.surface, mount.ref);
       if (!mount.roller || state?.status !== 'ok') return;
       // Bounded visual work. Long text and remaining readings stay static.
@@ -587,6 +650,7 @@
           roller: variant === 'full' && numberRoll && numberAnimation ? numberRoll.create({ animation: numberAnimation, selector: '[data-pv-roll]', mode: motionMode }) : null };
         mounts.set(container, mount);
         observer?.observe(container);
+        onMount?.(mount);
         paint(mount);
         scheduleDemand();
         return container;

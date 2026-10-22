@@ -9,6 +9,10 @@ function subscribe(channel, callback) {
 
 // Same narrow renderer contract; independent channels, never EdgeDock handlers.
 contextBridge.exposeInMainWorld('tokenMonitorEdgeDock', {
+  syncWebSurface: input => ipcRenderer.invoke('plugins:surface:sync', input),
+  onWebSurfaceReady: callback => { const listener = () => callback(); ipcRenderer.on('plugins:surface:ready', listener); return () => ipcRenderer.removeListener('plugins:surface:ready', listener); },
+  onWebSurfaceFailed: callback => { const listener = (_event, value) => callback(value); ipcRenderer.on('plugins:surface:failed', listener); return () => ipcRenderer.removeListener('plugins:surface:failed', listener); },
+  onWebSurfaceEscape: callback => { const listener = () => callback(); ipcRenderer.on('plugins:surface:escape', listener); return () => ipcRenderer.removeListener('plugins:surface:escape', listener); },
   ready: () => ipcRenderer.send('topNotch:ready'),
   reportNotchSize: (height, slots, summaryMeasurement) => ipcRenderer.send('topNotch:size', { height, slots, summaryMeasurement }),
   reportMotionFrame: (id, elapsed) => ipcRenderer.send('topNotch:frame', { id, elapsed }),

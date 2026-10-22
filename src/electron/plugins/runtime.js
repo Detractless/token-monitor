@@ -8,9 +8,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { createDataBus } = require('../../shared/plugins/dataBus');
-const { createCpuSampler, createMemorySampler } = require('./systemMetrics');
+const { registerSystemSources } = require('./systemDetails');
 const { createAppSources } = require('./appSources');
 const { createPluginSandbox, registerPluginScheme } = require('./sandbox');
+const { createWebUi, registerWebUiScheme } = require('./webUi');
 const { createPluginPages } = require('./pages');
 const { createManagedPlugins } = require('./managed');
 const { createPluginAppearance } = require('./appearance');
@@ -40,6 +41,7 @@ function createPluginRuntime({
   getContext,
   isMainSender,
   isSurfaceSender = () => false,
+  surfaceContext = () => null,
   placementContext = () => ({}),
   tokenRateApi,
   presentation,
@@ -49,8 +51,7 @@ function createPluginRuntime({
   const { app, BrowserWindow, Notification, ipcMain, session, shell, dialog } = electron;
   const safeMode = safeModeRequested(process.argv, env);
   const bus = createDataBus({ onError: (error) => log(`[plugins] source failed: ${error.message}`) });
-  bus.defineSource('sys.cpu', { sample: createCpuSampler(), minIntervalMs: 1000 });
-  bus.defineSource('sys.memory', { sample: createMemorySampler(), minIntervalMs: 1000 });
+  registerSystemSources(bus, { powerMonitor: electron.powerMonitor });
   const appSources = createAppSources({ bus, tokenRateApi, presentation, getContext });
   const userDir = path.join(userDataDir, 'plugins');
 
@@ -94,6 +95,7 @@ function createPluginRuntime({
     log
   });
 
+  const webUi = electron.WebContentsView ? createWebUi({ electron, manager, bus, isMainSender, surfaceContext, surfacePlaced: (ref, surface) => placementsFor(getSettings(), ref)[surface], file: path.join(userDataDir, 'plugin-page-designs.json') }) : null;
   const managed = createManagedPlugins({ root: path.join(userDataDir, 'plugin-manager'), userDir,
     dataDir: path.join(userDataDir, 'plugin-data'), manager, getSettings, saveSettings: persistManagementSettings, getLocale });
   managed.recover();
@@ -106,6 +108,7 @@ function createPluginRuntime({
   // Each window that draws plugin views registers which refs it shows on
   // which surface; a surface's demand is the union across its windows.
   const subscribers = new Map();
+  const nativeDemandVisible = (webContents, surface) => { const scope = surfaceContext({ sender: webContents }, surface); return scope?.visible === true || scope?.preparing === true; };
   function setDemand(webContents, surface, refs) {
     let subscriber = subscribers.get(webContents.id);
     if (!subscriber) {
@@ -118,10 +121,14 @@ function createPluginRuntime({
     }
     const allowed = new Set(manager.list().plugins.filter(plugin => plugin.status === 'active')
       .flatMap(plugin => (plugin.views || []).filter(view => view.surfaces.includes(surface)
-        && (surface !== 'page' || placementsFor(getSettings(), view.ref).page)).map(view => view.ref)));
+        && (!['page', 'notch', 'edgeDock'].includes(surface) || placementsFor(getSettings(), view.ref)[surface])).map(view => view.ref)));
     const selected = Array.isArray(refs) ? refs.filter(ref => typeof ref === 'string' && allowed.has(ref)).slice(0, 32) : [];
     subscriber.demands.set(surface, selected);
-    demand.set(webContents.id, surface, selected);
+    const native = ['notch', 'edgeDock'].includes(surface);
+    demand.set(webContents.id, surface, !native || nativeDemandVisible(webContents, surface) ? selected : []);
+    // Opening a view is not a streaming update: resolve existing readings now.
+    // This neither samples nor bypasses active placement / native visibility.
+    if (!webContents.isDestroyed()) webContents.send('plugins:views', manager.payload(surface));
   }
   manager.onViews((surface, payload) => {
     for (const subscriber of subscribers.values()) {
@@ -224,8 +231,6 @@ function createPluginRuntime({
       applySettingsPatch(patch);
       return listWithPlacements();
     });
-    ipcMain.handle('plugins:appearance', event => { requireMain(event); return appearance.state(); });
-    ipcMain.handle('plugins:setAppearance', (event, value) => { requireMain(event); const next = appearance.set(value); manager.settingsChanged(); return next; });
     ipcMain.handle('plugins:skins', (event) => {
       requireMain(event);
       return manager.skins();
@@ -254,6 +259,12 @@ function createPluginRuntime({
   return {
     manager,
     bus,
+    refreshWebSurfaces() {
+      webUi?.refreshSurfaces();
+      for (const subscriber of subscribers.values()) for (const [surface, refs] of subscriber.demands) {
+        if (['notch', 'edgeDock'].includes(surface)) demand.set(subscriber.webContents.id, surface, nativeDemandVisible(subscriber.webContents, surface) ? refs : []);
+      }
+    },
     safeMode,
     start() {
       registerIpc();
@@ -264,9 +275,10 @@ function createPluginRuntime({
     },
     settingsChanged() {
       manager.settingsChanged();
+      webUi?.refreshSurfaces();
       pages.refresh();
       for (const subscriber of subscribers.values()) {
-        if (subscriber.demands.has('page')) setDemand(subscriber.webContents, 'page', subscriber.demands.get('page'));
+        for (const surface of ['page', 'notch', 'edgeDock']) if (subscriber.demands.has(surface)) setDemand(subscriber.webContents, surface, subscriber.demands.get(surface));
       }
     },
     // Rendered tray items need view state synchronously with the bitmap.
@@ -278,10 +290,11 @@ function createPluginRuntime({
       catalog.dispose();
       managed.dispose();
       pages.dispose();
+      webUi?.dispose();
       manager.dispose();
       bus.dispose();
     }
   };
 }
 
-module.exports = { createPluginRuntime, registerPluginScheme, safeModeRequested };
+module.exports = { createPluginRuntime, registerPluginScheme: protocol => { registerPluginScheme(protocol); registerWebUiScheme(protocol); }, safeModeRequested };

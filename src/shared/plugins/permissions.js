@@ -7,6 +7,9 @@
 // consent prompt has to make loud.
 
 const PERMISSIONS = Object.freeze({
+  'ui.web': Object.freeze({ risk: 'action', sources: Object.freeze([]) }),
+  'tm.pages': Object.freeze({ risk: 'read', sources: Object.freeze([]) }),
+  'sys.details': Object.freeze({ risk: 'read', sources: Object.freeze(['sys.details', 'sys.cpu.details', 'sys.memory.details', 'sys.network', 'sys.disk', 'sys.battery', 'sys.gpu', 'sys.temperature']) }),
   'sys.cpu': Object.freeze({ risk: 'read', sources: Object.freeze(['sys.cpu']) }),
   'sys.memory': Object.freeze({ risk: 'read', sources: Object.freeze(['sys.memory']) }),
   // Totals and the live rate; never per-session titles or account identity.

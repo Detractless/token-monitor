@@ -77,6 +77,7 @@ function createEdgeDockController(deps) {
     createGlass,
     prefersReducedMotion = () => false,
     onPlacementChange,
+    onWebSurfaceChanged = () => {},
     applyShapeMask,
     installNonActivatingInput = () => {},
     primaryButtonDown = () => null,
@@ -342,6 +343,7 @@ function createEdgeDockController(deps) {
     if (!alive(win)) return;
     const revealing = visible && !visibleTargets[surface];
     visibleTargets[surface] = visible;
+    onWebSurfaceChanged();
     const ignore = !(visible && (surface !== 'peek' || peekTakesPointer()));
     if (surface === 'peek') setPeekIgnoresMouse(win, ignore, visible);
     else win.setIgnoreMouseEvents(ignore);
@@ -506,6 +508,7 @@ function createEdgeDockController(deps) {
   // Stats arrive every few seconds and mostly change nothing a surface shows;
   // re-rendering on each one rebuilt the card and made it flicker.
   function render(surface) {
+    onWebSurfaceChanged();
     if (!ready[surface]) return;
     const payload = renderPayload(surface);
     const serialized = JSON.stringify(payload);
@@ -1387,6 +1390,10 @@ function createEdgeDockController(deps) {
       for (const surface of SURFACES) render(surface);
     },
     isRunning: () => running,
+    webSurface: (host) => {
+      const kind = ['rail', 'bubble'].find(key => windows[key]?.webContents === host);
+      return kind ? { kind, visible: running && !drag && visibleTargets[kind] === true && (kind === 'rail' ? railVisible : bubbleVisible) } : null;
+    },
     owns: (win) => Boolean(win) && SURFACES.some((surface) => windows[surface] === win),
     stop
   };

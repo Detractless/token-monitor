@@ -275,6 +275,7 @@ const pluginPlacementsApi = window.TokenMonitorPluginPlacements;
 // Assigned in the Plugins block below; read lazily by Home, tray and settings.
 let pluginViewHost = null;
 let pluginMainPages = null;
+let pluginPageDesigns = null;
 function pluginPageOptions() { return window.TokenMonitorPluginMainPages?.entries(state.pluginCatalog) || []; }
 let pluginApi = null;
 let pluginSettingsPanel = null;
@@ -7252,6 +7253,16 @@ function setRendererSettings(next) {
 }
 
 function render() {
+  renderAppContent();
+  if (pluginPageDesigns) {
+    const supported = ['model', 'tool', 'device'].includes(state.breakdown);
+    const period = state.stats?.periods?.[state.period] || {};
+    const visible = supported && visibleStatsSurface() === 'main' && !isSettingsPanelOpen() && !isRendererWindowHidden() && !state.floatingBubble.collapsed && !state.openSession;
+    const rows = visible ? rowsForPeriod(period) : [];
+    pluginPageDesigns.render({ visible, catalog: state.pluginCatalog, reducedMotion: prefersReducedMotion(), snapshot: { target: state.breakdown, period: state.period, totalTokens: period.totalTokens, costUsd: period.costUsd, rows: rows.map(row => ({ label: row.name, tokens: row.value, costUsd: row.cost })) } });
+  }
+}
+function renderAppContent() {
   const surface = visibleStatsSurface();
   if (surface !== 'main') {
     if (!surface) statsRenderScheduler.request();
@@ -12740,6 +12751,7 @@ pluginMainPages = pluginViewHost ? window.TokenMonitorPluginMainPages.create({
   openWindow: ref => pluginBridge.openPage(ref).catch(error => setStatus(error.message, true))
 }) : null;
 if (pluginViewHost) new MutationObserver(() => pluginViewHost.refreshDemand()).observe(els.shell, { attributes: true, attributeFilter: ['class'] });
+pluginPageDesigns = pluginBridge?.webSync ? window.TokenMonitorPluginPageDesigns.create({ document, window, api: pluginBridge, t, breakdown: els.breakdown, update: () => render(), isActive: () => !isSettingsPanelOpen() && !isRendererWindowHidden() && !state.floatingBubble.collapsed }) : null;
 let pluginCatalogKey = '';
 
 function applyPluginCatalog(list) {
@@ -12748,7 +12760,7 @@ function applyPluginCatalog(list) {
   // Home and the theme chips depend only on which plugins and views are
   // active; process metrics refresh every few seconds and must not re-render.
   const key = JSON.stringify((list.plugins || []).map((plugin) => [plugin.id, plugin.status,
-    (plugin.views || []).map((view) => [view.ref, view.title, view.surfaces, view.placements?.page, view.placements?.notch]), (plugin.skins || []).map((skin) => skin.id)]));
+    (plugin.views || []).map((view) => [view.ref, view.title, view.surfaces, view.placements?.page, view.placements?.notch]), (plugin.skins || []).map((skin) => skin.id), plugin.webDocuments]));
   if (key !== pluginCatalogKey) {
     pluginCatalogKey = key;
     render();
@@ -12756,7 +12768,7 @@ function applyPluginCatalog(list) {
     renderThemePresetChips();
     renderNotchPageChoices();
     if (isSettingsSurfaceVisible()) preserveSettingsPanelScroll(renderViewPreferences);
-  }
+  } else if (pluginPageDesigns) render();
   return list;
 }
 
@@ -12783,8 +12795,6 @@ pluginApi = pluginBridge ? {
   cancelInstall: token => pluginBridge.cancelInstall(token),
   rollback: async id => applyPluginCatalog(await pluginBridge.rollback(id)),
   uninstall: async (id, options) => applyPluginCatalog(await pluginBridge.uninstall(id, options)),
-  appearance: () => pluginBridge.appearance(),
-  setAppearance: value => pluginBridge.setAppearance(value),
   openFolder: () => pluginBridge.openFolder()
 } : null;
 

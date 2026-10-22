@@ -22,6 +22,7 @@ function createDataBus({
 } = {}) {
   const sources = new Map();
   const demands = new Map();
+  const aliases = new Map();
   const listeners = new Set();
   let pending = null;
   let disposed = false;
@@ -32,7 +33,7 @@ function createDataBus({
   function entryFor(id) {
     let entry = sources.get(id);
     if (!entry) {
-      entry = { id, sample: null, minIntervalMs: 0, timer: null, intervalMs: 0, value: undefined, at: 0, sampledAt: null, history: [], historyBytes: 0, valueBytes: 0, sampling: false, samples: 0, errors: 0 };
+      entry = { id, sample: null, minIntervalMs: 0, timer: null, intervalMs: 0, value: undefined, at: 0, sampledAt: null, history: [], historyBytes: 0, valueBytes: 0, sampling: false, generation: 0, reset: null, samples: 0, errors: 0 };
       sources.set(id, entry);
     }
     return entry;
@@ -93,7 +94,7 @@ function createDataBus({
   function effectiveInterval(id) {
     let interval = 0;
     for (const demand of demands.values()) {
-      if (!demand.sources.has(id)) continue;
+      if (!demand.sources.has(id) && ![...demand.sources].some(source => aliases.get(source)?.source === id)) continue;
       interval = interval ? Math.min(interval, demand.intervalMs) : demand.intervalMs;
     }
     const entry = sources.get(id);
@@ -103,13 +104,20 @@ function createDataBus({
   async function runSample(entry) {
     if (entry.sampling || !entry.sample || disposed) return;
     entry.sampling = true;
+    const generation = entry.generation;
     entry.samples += 1;
     // The cadence runs from the attempt, not from the last value: a sampler
     // that yields nothing (CPU priming, a failed read) must still wait.
     entry.sampledAt = now();
     try {
       const value = await entry.sample();
-      if (value !== undefined && !disposed) record(entry, value, now());
+      if (value !== undefined && !disposed && generation === entry.generation && effectiveInterval(entry.id)) {
+        record(entry, value, now());
+        for (const [id, alias] of aliases) if (alias.source === entry.id && effectiveInterval(id)) {
+          const projected = alias.project(value);
+          if (projected !== undefined) record(entryFor(id), projected, now());
+        }
+      }
     } catch (error) {
       entry.errors += 1;
       onError(error);
@@ -122,6 +130,7 @@ function createDataBus({
     if (entry.timer) clearTimer(entry.timer);
     entry.timer = null;
     const interval = entry.sample ? effectiveInterval(entry.id) : 0;
+    if (entry.intervalMs && !interval) { entry.generation++; entry.sampledAt = null; entry.reset?.(); }
     entry.intervalMs = interval;
     if (!interval || disposed || entry.sampling) return;
     const due = entry.sampledAt === null ? 0 : Math.max(0, entry.sampledAt + interval - now());
@@ -134,7 +143,7 @@ function createDataBus({
   }
 
   function rescheduleAll(ids) {
-    for (const id of ids) {
+    for (const id of new Set([...ids].map(id => aliases.get(id)?.source || id))) {
       const entry = sources.get(id);
       if (entry?.sample) schedule(entry);
     }
@@ -142,11 +151,17 @@ function createDataBus({
 
   return {
     // A pull source sampled on demand; push sources are just published to.
-    defineSource(id, { sample, minIntervalMs = 1000 } = {}) {
+    defineSource(id, { sample, reset, minIntervalMs = 1000 } = {}) {
       const entry = entryFor(id);
+      entry.reset = typeof reset === 'function' ? reset : null;
       entry.sample = typeof sample === 'function' ? sample : null;
       entry.minIntervalMs = Math.max(0, minIntervalMs);
       schedule(entry);
+    },
+    defineAlias(id, source, project) {
+      if (id === source || aliases.has(source) || typeof project !== 'function') throw new Error('invalid source alias');
+      entryFor(id).minIntervalMs = sources.get(source)?.minIntervalMs || 0;
+      aliases.set(id, { source, project });
     },
     publish(id, value, at = now()) {
       if (disposed) return;
@@ -155,6 +170,7 @@ function createDataBus({
     clearSourcesWithPrefix(prefix) {
       for (const [id, entry] of sources) {
         if (!id.startsWith(prefix)) continue;
+        entry.generation++; entry.reset?.();
         if (entry.timer) clearTimer(entry.timer);
         for (const sample of [...entry.history]) forget(sample);
         currentBytes -= entry.valueBytes;
@@ -175,6 +191,13 @@ function createDataBus({
       return entry.history.slice(-count).map(({ value }) => {
         const picked = field ? pickField(value, field) : value;
         return typeof picked === 'number' && Number.isFinite(picked) ? picked : null;
+      });
+    },
+    historyPoints(id, count = DEFAULT_HISTORY, field = '') {
+      const entry = sources.get(id);
+      return (count > 0 ? (entry?.history || []).slice(-Math.min(DEFAULT_HISTORY, Math.floor(count))) : []).map(({ value, at }) => {
+        const picked = field ? pickField(value, field) : value;
+        return { at, value: typeof picked === 'number' && Number.isFinite(picked) ? picked : null };
       });
     },
     setDemand(consumer, { sources: ids = [], lifecycle = 'visible', intervalMs = 2000 } = {}) {

@@ -143,3 +143,12 @@ button.pv-control:hover { background: rgba(var(--overlay-rgb), .13); }
 [data-reduce-motion="on"] .pv-mount *, .edge-dock-reduced-motion .pv-mount * {
   animation: none !important; transition: none !important;
 }
+
+/* The native authored surface occupies this rectangle. Keep its lightweight
+   fallback laid out, but hide paint and input while the isolated child lives. */
+.pv-web-mounted > *, .pv-web-pending > * { visibility: hidden; pointer-events: none; }
+/* Reserve the authored rectangle from the first authoritative payload. Do not
+   display a different layout while its document starts. Slow starts use the
+   existing loading label; quick starts have no transient status text. */
+.pv-web-pending { position: relative; overflow: hidden; }
+.pv-web-pending.pv-web-waiting::after { content: attr(data-web-loading); position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; }

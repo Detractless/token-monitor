@@ -32,9 +32,8 @@
     let packagePreview = null;
     let operation = null;
     let catalogData = null, activeTab = 'installed', query = '', sourcesOpen = false;
-    let styleState = null, styleDraft = null, styleTransfer = '', styleDirty = false;
     let selectedPluginId = '', diagnostics = false, installedPosition = null;
-    let catalogReview = null, transferOpen = false, menuId = 0, aboutOpen = false;
+    let catalogReview = null, menuId = 0, aboutOpen = false;
     const sourceDraft = { url: '', publicKey: '' };
     const chosenVersions = new Map();
     const detailState = new Map();
@@ -366,69 +365,6 @@
       return details;
     }
 
-    function stylePanel() {
-      const wrap = el(document, 'div', 'plugin-style-form');
-      wrap.append(el(document, 'p', 'settings-note', t('plugins.style.scope')));
-      if (styleState?.error) wrap.append(el(document, 'p', 'plugin-risk', styleState.error));
-      const draft = styleDraft ||= structuredClone(styleState?.value || {}); draft.colors ||= {};
-      const fields = el(document, 'div', 'plugin-style-fields');
-      const advanced = el(document, 'section', 'plugin-style-advanced');
-      advanced.append(el(document, 'h3', 'plugin-detail-heading', t('plugins.style.customize')));
-      const advancedFields = el(document, 'div', 'plugin-style-fields');
-      advanced.append(advancedFields);
-      const preview = el(document, 'div', 'pv-mount plugin-style-preview');
-      const previewGroup = el(document, 'section', 'plugin-preview-group');
-      previewGroup.append(el(document, 'span', 'plugin-preview-label', t('plugins.ui.preview')), preview);
-      const status = el(document, 'p', 'settings-note', styleDirty ? t('plugins.style.unsaved') : ''); status.setAttribute('role', 'status');
-      const controls = {};
-      const paint = () => {
-        const views = window.TokenMonitorPluginViews;
-        views.applyAppearance(preview, draft);
-        preview.replaceChildren(views.renderTree(document, { type: 'stack', dir: 'col', gap: 12, children: [
-          { type: 'text', size: 'l', text: t('plugins.style.previewTitle') },
-          { type: 'text', text: t('plugins.style.previewText'), tone: 'muted' },
-          { type: 'meter', label: t('plugins.style.previewMeter'), value: 64, caption: '64%', tone: 'accent' },
-          { type: 'input', action: 'preview', label: t('plugins.style.previewInput'), value: t('plugins.style.previewValue') }
-        ] }, { onInteraction: () => {} }));
-      };
-      const options = { font: ['inherit', 'system', 'mono'], density: ['compact', 'standard', 'comfortable'], corners: ['square', 'rounded', 'soft'], panel: ['plain', 'outline', 'soft'] };
-      for (const [key, values] of Object.entries(options)) {
-        const label = el(document, 'label', 'settings-item plugin-style-field');
-        label.append(el(document, 'span', 'settings-item-text', t(`plugins.style.${key}`)));
-        const select = el(document, 'select'); select.dataset.styleKey = key;
-        for (const value of values) { const option = el(document, 'option', '', t(`plugins.style.option.${value}`)); option.value = value; select.append(option); }
-        select.value = draft[key]; controls[key] = select;
-        select.addEventListener('change', () => { draft[key] = select.value; styleDirty = true; status.textContent = t('plugins.style.unsaved'); paint(); }); label.append(select); (['font', 'density'].includes(key) ? fields : advancedFields).append(label);
-      }
-      const colorDefaults = { accent: '#8aafff', chart: '#baafff', text: '#f0f2f5', muted: '#a6adb7', background: '#303438' };
-      const colors = el(document, 'div', 'color-picker-grid plugin-style-colors');
-      advanced.append(colors);
-      for (const key of Object.keys(colorDefaults)) {
-        const label = el(document, 'label', 'color-picker-row');
-        label.append(el(document, 'span', 'color-picker-name', t(`plugins.style.color.${key}`)));
-        const input = el(document, 'input', 'color-picker-input'); input.type = 'color'; input.value = draft.colors[key] || colorDefaults[key]; input.dataset.styleColor = key;
-        input.addEventListener('input', () => { draft.colors[key] = input.value; styleDirty = true; status.textContent = t('plugins.style.unsaved'); paint(); });
-        label.append(input); colors.append(label);
-      }
-      const actions = el(document, 'div', 'settings-actions plugin-style-actions');
-      actions.append(button(t('plugins.style.save'), () => void run(async () => { styleState = await api.setAppearance(draft); styleDraft = null; styleDirty = false; return null; })),
-        button(t('plugins.style.reset'), () => void run(async () => { styleState = await api.setAppearance({}); styleDraft = null; styleTransfer = ''; styleDirty = false; return null; })));
-      const transfer = el(document, 'section', 'plugin-style-transfer'); transfer.hidden = !transferOpen;
-      transfer.append(el(document, 'h3', 'plugin-detail-heading', t('plugins.style.transfer')));
-      const textLabel = el(document, 'label', 'plugin-style-field', t('plugins.style.json'));
-      const data = el(document, 'textarea'); data.maxLength = 8192; data.spellcheck = false; data.value = styleTransfer; data.addEventListener('input', () => { styleTransfer = data.value; }); textLabel.append(data);
-      const transferActions = el(document, 'div', 'settings-actions');
-      transferActions.append(button(t('plugins.style.export'), () => { data.value = styleTransfer = JSON.stringify(draft, null, 2); data.focus(); data.select(); }),
-        button(t('plugins.style.import'), () => void run(async () => {
-          styleTransfer = data.value;
-          if (data.value.length > 8192) throw new Error('Style JSON must be under 8 KB');
-          styleState = await api.setAppearance(JSON.parse(data.value)); styleDraft = null; styleTransfer = ''; styleDirty = false; return null;
-        })));
-      transfer.append(textLabel, transferActions);
-      actions.append(actionMenu(t('plugins.style.transfer'), [[t('plugins.style.transfer'), () => { transferOpen = true; render(); content.querySelector('.plugin-style-transfer textarea')?.focus(); }]]));
-      wrap.append(previewGroup, fields, advanced, transfer, status, actions); paint(); return wrap;
-    }
-
     function statusChip(plugin) {
       const status = plugin.status;
       const chip = el(document, 'span', `plugin-status plugin-status-${status}`, t(`settings.plugins.status.${status}`));
@@ -715,14 +651,13 @@
         tabs = el(document, 'nav', 'plugin-catalog-tabs');
         tabs.setAttribute('aria-label', t('settings.plugins.title'));
         tabs.setAttribute('role', 'tablist');
-        for (const tab of ['installed', 'official', 'community', 'style']) {
+        for (const tab of ['installed', 'official', 'community']) {
           const control = button(t(`plugins.catalog.${tab}`), () => {
             if (tab === activeTab) { if (tab === 'installed' && selectedPluginId) closePlugin(); return; }
             void run(async () => {
               // Only switch after the new page is ready; failed loads leave
               // the current page and its drafts intact.
-              if (tab === 'style') { if (!styleState) styleState = await api.appearance(); }
-              else if (tab !== 'installed') catalogData = await api.catalog();
+              if (tab !== 'installed') catalogData = await api.catalog();
               activeTab = tab; query = ''; if (tab === 'installed') { selectedPluginId = ''; diagnostics = false; } return null;
             });
           });
@@ -744,7 +679,6 @@
         content.setAttribute('role', 'tabpanel');
         container.replaceChildren(tabs, content);
       }
-      if (activeTab === 'style') { nodes.push(stylePanel()); replaceContent(nodes); return; }
       if (activeTab !== 'installed') {
         if (sourcesOpen && activeTab === 'community') nodes.push(sourcesPanel());
         else if (catalogReview && catalogReview.origin.kind === activeTab) nodes.push(catalogReviewPanel());

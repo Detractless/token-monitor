@@ -83,6 +83,7 @@ function createPluginManager({
 }) {
   const plugins = new Map();
   const surfaceDemand = new Map(SURFACES.map((surface) => [surface, new Set()]));
+  const webVisible = new Map();
   const viewListeners = new Set();
   const changeListeners = new Set();
   const supervisor = createSupervisor({ now });
@@ -160,7 +161,7 @@ function createPluginManager({
 
   function freshRuntime() {
     return {
-      state: 'stopped', mode: null, seq: 0, revision: ++interactionRevision, interactionSeq: 0, pendingInteractions: new Map(), interactionLimit: createRateLimiter({ capacity: 40, perSecond: 30, now }), inTick: false, tickDeadline: null, tickTimer: null, idleTimer: null,
+      webRevision: ++interactionRevision, state: 'stopped', mode: null, seq: 0, revision: ++interactionRevision, interactionSeq: 0, pendingInteractions: new Map(), interactionLimit: createRateLimiter({ capacity: 40, perSecond: 30, now }), inTick: false, tickDeadline: null, tickTimer: null, idleTimer: null,
       bootTimer: null, restartTimer: null, subscriptions: new Set(), metrics: null,
       limiter: createRateLimiter({ ...MESSAGE_RATE, now }), notifyLimiter: createRateLimiter({ capacity: 3, perSecond: 1 / 60, now }),
       netLimiter: createRateLimiter({ capacity: 10, perSecond: 0.5, now }), requests: new Set(), generation: 0, dropped: 0, lastError: ''
@@ -184,7 +185,7 @@ function createPluginManager({
         ...record,
         logs: [],
         alertStates: new Map(),
-        storage: record.manifest?.main ? broker.createPluginStorage({ dir: dataDir, pluginId: record.id, onError: error => {
+        storage: (record.manifest?.main || record.manifest?.webUi) ? broker.createPluginStorage({ dir: dataDir, pluginId: record.id, onError: error => {
           const owner = plugins.get(record.id);
           if (owner) addLog(owner, 'error', `storage write failed: ${error.message}`);
           emitChanged();
@@ -246,6 +247,10 @@ function createPluginManager({
         if (sources.length) wanted.set(`view:${surface}:${ref}`, { sources, lifecycle: 'visible', intervalMs: plugin.manifest.visible.intervalMs });
         if (plugin.manifest.main) modes.set(plugin.id, 'visible');
       }
+    }
+    for (const ref of webVisible.values()) {
+      const [pluginId, documentId] = ref.split('/'); const plugin = plugins.get(pluginId);
+      if (plugin && isActive(plugin) && plugin.manifest.main && plugin.manifest.webUi?.documents.some(doc => doc.id === documentId)) modes.set(plugin.id, 'visible');
     }
     for (const plugin of plugins.values()) {
       if (!isActive(plugin) || !backgroundAllowed(plugin)) continue;
@@ -678,6 +683,8 @@ function createPluginManager({
     return createResolver({
       read: (id) => bus.read(id),
       history: (id, count, field) => bus.history(id, count, field),
+      historyPoints: (id, count, field) => bus.historyPoints(id, count, field),
+      sourceInterval: id => bus.effectiveInterval(id),
       pluginId: plugin.id,
       locale,
       sanitizeDraw: (list) => (Array.isArray(list) ? sanitizeDisplayList(list) : []),
@@ -725,6 +732,7 @@ function createPluginManager({
     const resolver = resolverFor(plugin, locale);
     try {
       const out = { ...base, status: 'ok', revision: plugin.runtime.revision };
+      out.webDocuments = (plugin.manifest.webUi?.documents || []).filter(doc => doc.target === surface && doc.view === view.id).map(doc => ({ ref: `${plugin.id}/${doc.id}`, variant: doc.variant, height: doc.height }));
       if (surface === 'tray') {
         out.tray = resolver.resolveTray(view.tray) || null;
         out.compact = resolver.resolveCompact(view.compact);
@@ -807,6 +815,7 @@ function createPluginManager({
         supported: Boolean(manifest.background || manifest.alerts.length),
         enabled: state?.background === true
       },
+      webDocuments: (manifest.webUi?.documents || []).map(doc => ({ ...doc, ref: `${plugin.id}/${doc.id}` })),
       views: manifest.views.map((view) => ({
         ref: placements.pluginRef(plugin.id, view.id),
         id: view.id,
@@ -835,6 +844,31 @@ function createPluginManager({
   }
 
   return {
+    webDocument(ref) {
+      const [id, docId, extra] = String(ref || '').split('/');
+      const plugin = plugins.get(id);
+      const document = plugin?.manifest?.webUi?.documents.find(doc => doc.id === docId);
+      if (extra || !document || !isActive(plugin) || !permissionsApi.hasPermission(grantOf(plugin), 'ui.web') || !permissionsApi.hasPermission(grantOf(plugin), 'tm.pages') || mutating || disposed) throw new Error('web document is unavailable');
+      return { pluginId: id, document, manifest: plugin.manifest, dir: plugin.dir, revision: plugin.runtime.webRevision, locale: getLocale() };
+    },
+    setWebVisible(owner, ref) {
+      if (ref) { this.webDocument(ref); webVisible.set(owner, ref); } else webVisible.delete(owner);
+      reconcile();
+    },
+    webReadAllowed(ref, source) {
+      const { pluginId, manifest } = this.webDocument(ref);
+      if (source.startsWith('@')) return manifest.metrics.some(metric => source === `@${metric.id}`);
+      return permissionsApi.canReadSource(grantOf(plugins.get(pluginId)), source);
+    },
+    webSource(ref, source) {
+      if (!this.webReadAllowed(ref, source)) throw new Error('source permission denied');
+      return busId(this.webDocument(ref).pluginId, source);
+    },
+    webStorage(ref, op, key, value) {
+      const { pluginId } = this.webDocument(ref);
+      if (!['get', 'set', 'delete'].includes(op)) throw new Error('unsupported storage operation');
+      return plugins.get(pluginId).storage[op](key, value);
+    },
     reload,
     beginMutation() {
       for (const plugin of plugins.values()) plugin.storage?.flush();

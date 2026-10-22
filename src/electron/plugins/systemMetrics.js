@@ -39,7 +39,7 @@ function createCpuSampler({ cpus = () => os.cpus() } = {}) {
 // koffi registers struct names globally, so the binding is created once per
 // process and shared by every reader.
 let macApi = null;
-function createMacMemoryReader() {
+function createMacMemoryReader({ detailed = false } = {}) {
   return function readMacMemory() {
     if (!macApi) {
       const koffi = require('koffi');
@@ -67,18 +67,21 @@ function createMacMemoryReader() {
     const count = [macApi.count];
     if (macApi.hostStatistics64(macApi.host, 4, info, count) !== 0) throw new Error('host_statistics64 failed');
     const appPages = Math.max(0, Number(info.internal_page_count) - Number(info.purgeable_count));
-    return (appPages + Number(info.wire_count) + Number(info.compressor_page_count)) * macApi.pageSize;
+    const used = (appPages + Number(info.wire_count) + Number(info.compressor_page_count)) * macApi.pageSize;
+    return detailed ? { used, app: appPages * macApi.pageSize, wired: Number(info.wire_count) * macApi.pageSize, compressed: Number(info.compressor_page_count) * macApi.pageSize, fileBacked: Number(info.external_page_count) * macApi.pageSize, swapInBytes: Number(info.swapins) * macApi.pageSize, swapOutBytes: Number(info.swapouts) * macApi.pageSize } : used;
   };
 }
 
-function createMemorySampler({ platform = process.platform, totalmem = () => os.totalmem(), freemem = () => os.freemem(), macReader = null } = {}) {
-  let readMac = platform === 'darwin' ? macReader || createMacMemoryReader() : null;
+function createMemorySampler({ platform = process.platform, totalmem = () => os.totalmem(), freemem = () => os.freemem(), macReader = null, detailed = false } = {}) {
+  let readMac = platform === 'darwin' ? macReader || createMacMemoryReader({ detailed }) : null;
   return function sampleMemory() {
     const total = totalmem();
-    let used = null;
+    let used = null, fields = {};
     if (readMac) {
       try {
-        used = readMac();
+        const reading = readMac();
+        used = typeof reading === 'number' ? reading : reading.used;
+        if (detailed && typeof reading === 'object') fields = reading;
       } catch {
         // Keep sampling with the portable figure rather than failing the source.
         readMac = null;
@@ -88,7 +91,7 @@ function createMemorySampler({ platform = process.platform, totalmem = () => os.
     // the in-use figure there; on macOS it is only the fallback above.
     if (used === null) used = total - freemem();
     const clamped = Math.max(0, Math.min(total, used));
-    return { used: clamped, total, percent: total ? Math.round((clamped / total) * 1000) / 10 : null };
+    return { ...fields, used: clamped, total, percent: total ? Math.round((clamped / total) * 1000) / 10 : null };
   };
 }
 

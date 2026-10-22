@@ -6,6 +6,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 // deliberately narrow bridge: it can render what the main process pushes and
 // report pointer gestures, nothing else (no settings writes, no credentials).
 contextBridge.exposeInMainWorld('tokenMonitorEdgeDock', {
+  syncWebSurface: input => ipcRenderer.invoke('plugins:surface:sync', input),
+  onWebSurfaceReady: callback => { const listener = () => callback(); ipcRenderer.on('plugins:surface:ready', listener); return () => ipcRenderer.removeListener('plugins:surface:ready', listener); },
+  onWebSurfaceFailed: callback => { const listener = (_event, value) => callback(value); ipcRenderer.on('plugins:surface:failed', listener); return () => ipcRenderer.removeListener('plugins:surface:failed', listener); },
+  onWebSurfaceEscape: callback => { const listener = () => callback(); ipcRenderer.on('plugins:surface:escape', listener); return () => ipcRenderer.removeListener('plugins:surface:escape', listener); },
   ready: () => ipcRenderer.send('edgeDock:ready'),
   click: (cellIndex) => ipcRenderer.send('edgeDock:click', { cellIndex }),
   pointer: () => ipcRenderer.send('edgeDock:pointer'),

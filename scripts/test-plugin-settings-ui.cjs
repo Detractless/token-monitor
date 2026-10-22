@@ -30,7 +30,7 @@ async function main() {
     const tick = () => new Promise(r => setTimeout(r, 20));
     const data = {enabled:true, plugins:[{id:'alpha',name:'Alpha',description:'Plugin description',version:'1.0.0',source:'builtin',status:'active',enabled:true,permissions:[],hosts:[],views:[{ref:'alpha/view',title:'View',surfaces:['home','page'],placements:{home:false}}],background:{supported:true,enabled:false},logs:[{at:0,level:'info',text:'Fixture ready'}],runtime:{state:'idle',cpuPercent:null,memoryMB:null}},{id:'beta',name:'Beta',source:'builtin',status:'disabled',enabled:false,permissions:[],hosts:[],views:[]}]};
     let pending, reject, previewPending, catalogCalls = 0;
-    let catalogMode = 'deferred', appearanceMode = 'success', previewMode = 'success', globalMode = 'success', savedMasterEnabled = true;
+    let catalogMode = 'deferred', previewMode = 'success', globalMode = 'success', savedMasterEnabled = true;
     const catalog = {entries:[{id:'demo',name:'Demo',description:'Example',author:'Author',version:'1.0.0',origin:{id:'official',kind:'official'},versions:[{version:'1.0.0',compatible:true,installable:true},{version:'2.0.0',compatible:true,installable:true}],status:'available'}],sources:[]};
     const tooltips = TokenMonitorLimitWindowsView.createLimitWindowsView({document,tooltip:{hasOpened:()=>false,markOpened:()=>{},release:()=>{}}});
     const panel = TokenMonitorPluginSettings.createPluginSettingsPanel({document,container:box,setDetailTooltip:tooltips.setDetailTooltip,getEnabled:()=>savedMasterEnabled,onSetEnabled:async enabled=>{calls.push(['global',enabled]);if(globalMode==='error')throw Error('settings write failed');savedMasterEnabled=enabled;data.enabled=enabled&&!data.safeMode;return structuredClone(data)},t:(key,args)=>key==='plugins.ui.locationCount'?String(args.count)+' locations':key,onError:e=>errors.push(e.message),api:{
@@ -38,8 +38,6 @@ async function main() {
       catalog:()=>{catalogCalls++;return catalogMode==='deferred'?new Promise((yes,no)=>{pending=yes;reject=no}):Promise.resolve(catalog)},
       place:async(ref,surface,on)=>{calls.push(['place',ref,surface,on]);data.plugins[0].views[0].placements.home=on;return structuredClone(data)},
       setEnabled:async(id,on)=>{const p=data.plugins.find(p=>p.id===id);p.enabled=on;p.status=on?'active':'disabled';return structuredClone(data)},
-      appearance:async()=>({value:{font:'inherit',density:'standard',corners:'rounded',panel:'plain',colors:{}}}),
-      setAppearance:async value=>{if(appearanceMode==='error')throw Error('ENOSPC');return {value}},
       catalogPreview:async(source,id,version)=>{calls.push(['preview',version]);if(previewMode==='error')throw Error('preview rejected');if(previewMode==='deferred')await new Promise(resolve=>{previewPending=resolve});return {token:'token-'+version,id,name:'Demo',description:'Example',version,author:'Author',origin:{id:source,kind:'official'},permissions:[],hosts:[],risk:{},operation:'install',sha256:'abc'}},
       cancelInstall:async token=>{calls.push(['cancel',token])},
       install:async token=>{calls.push(['install',token]);return structuredClone(data)},
@@ -93,7 +91,7 @@ async function main() {
     const community=tab('community');community.focus({preventScroll:true});community.click();reject(Error('offline'));await tick();
     check('failed-tab-load-keeps-current-page-and-focus',official.getAttribute('aria-selected')==='true'&&document.activeElement===community&&errors.at(-1)==='offline');
     community.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
-    check('keyboard-navigation-with-labelled-panel',document.activeElement===tab('style')&&tab('style').tabIndex===0&&[...box.querySelectorAll('[role="tab"]')].filter(n=>n.tabIndex===0).length===1&&box.querySelector('[role="tabpanel"]').getAttribute('aria-labelledby')===official.id&&box.querySelector('[role="tablist"]')!==null);
+    check('keyboard-navigation-with-labelled-panel',document.activeElement===tab('installed')&&tab('installed').tabIndex===0&&[...box.querySelectorAll('[role="tab"]')].filter(n=>n.tabIndex===0).length===1&&box.querySelector('[role="tabpanel"]').getAttribute('aria-labelledby')===official.id&&box.querySelector('[role="tablist"]')!==null);
     catalogMode='success';tab('installed').click();await tick();
     check('installed-cards-have-no-folds-pages-or-redundant-normal-status',!box.querySelector('.plugin-installed-card details, .plugin-installed-card .plugin-page-actions, .plugin-installed-card .plugin-status')&&box.querySelectorAll('.plugin-manage').length===2);
     let manage=box.querySelector('.plugin-manage');manage.focus({preventScroll:true});scroll.scrollTop=60;manage.click();await tick();
@@ -174,31 +172,11 @@ async function main() {
     data.safeMode=false;data.enabled=savedMasterEnabled;await panel.refresh();await openGlobal();click('plugins.ui.about');await tick();
     check('plugin-explanation-is-secondary-route-with-focused-back',Boolean(box.querySelector('.plugin-about'))&&box.querySelector('.plugin-about p').textContent==='settings.plugins.intro'&&document.activeElement===box.querySelector('.plugin-back'));
     box.querySelector('.plugin-back').click();await tick();check('about-back-restores-more-trigger-focus',document.activeElement===box.querySelector('.plugin-toolbar .plugin-more'));
-    tab('style').click();await tick();
-    check('style-preview-precedes-edit-controls',Boolean(box.querySelector('.plugin-style-preview').compareDocumentPosition(box.querySelector('[data-style-key="font"]'))&Node.DOCUMENT_POSITION_FOLLOWING));
-    const field=box.querySelector('.plugin-style-field');
-    check('style-controls-align-within-host-settings',getComputedStyle(field).display==='flex'&&field.querySelector('select').getBoundingClientRect().width>=140,{width:field.querySelector('select').getBoundingClientRect().width,display:getComputedStyle(field).display});
-    const refRow=document.createElement('label');refRow.className='color-picker-row';const refInput=document.createElement('input');refInput.type='color';refInput.className='color-picker-input';refRow.append(refInput);scroll.append(refRow);
-    const color=box.querySelector('[data-style-color]');
-    check('style-color-controls-use-host-size-and-density',color.getBoundingClientRect().width===refInput.getBoundingClientRect().width&&color.getBoundingClientRect().height===refInput.getBoundingClientRect().height&&color.parentElement.getBoundingClientRect().height<=28,{color:color.getBoundingClientRect().toJSON(),rowHeight:color.parentElement.getBoundingClientRect().height});
-    refRow.remove();color.value='#123456';color.dispatchEvent(new Event('input'));
-    tab('installed').click();await tick();tab('style').click();await tick();check('compact-colors-retain-unsaved-draft',box.querySelector('[data-style-color]').value==='#123456');
-    let font=box.querySelector('[data-style-key="font"]');font.value='mono';font.dispatchEvent(new Event('change'));
-    let jsonDraft=box.querySelector('textarea');jsonDraft.value='{"font":"mono"}';jsonDraft.dispatchEvent(new Event('input'));
-    tab('installed').click();await tick();tab('style').click();await tick();
-    check('style-tab-round-trip-keeps-preview-json-and-unsaved-state',box.querySelector('[data-style-key="font"]').value==='mono'&&box.querySelector('textarea').value==='{"font":"mono"}'&&box.querySelector('[role="status"]').textContent==='plugins.style.unsaved');
-    box.querySelector('.plugin-style-actions .plugin-more').click();await tick();click('plugins.style.transfer');await tick();
-    check('style-fields-flat-and-transfer-opens-from-tools',!box.querySelector('.plugin-style-form details')&&!box.querySelector('.plugin-style-transfer').hidden&&document.activeElement===box.querySelector('.plugin-style-transfer textarea'));
-    const raw=box.querySelector('textarea');raw.value='{bad JSON';raw.dispatchEvent(new Event('input'));click('plugins.style.import');await tick();
-    check('invalid-import-keeps-draft-and-transfer',box.querySelector('textarea').value==='{bad JSON'&&box.querySelector('[data-style-key="font"]').value==='mono'&&!box.querySelector('.plugin-style-transfer').hidden);
-    appearanceMode='error';click('plugins.style.save');await tick();
-    check('failed-save-keeps-style-draft',box.querySelector('[data-style-key="font"]').value==='mono'&&errors.at(-1)==='ENOSPC');
-    appearanceMode='success';click('plugins.style.save');await tick();
-    check('successful-save-updates-style',box.querySelector('[data-style-key="font"]').value==='mono');
+    check('removed-style-editor-has-no-tab-or-controls',!tab('style')&&!box.querySelector('.plugin-style-form')&&box.querySelectorAll('[role=tab]').length===3);
     tab('installed').click();await tick();catalogMode='deferred';tab('official').focus();tab('official').click();document.getElementById('outside').focus();pending(catalog);await tick();
     check('completion-does-not-steal-external-focus',document.activeElement.id==='outside');
     catalogMode='success';document.getElementById('after').style.display='none';scroll.style.height='400px';
-    tab('style').click();await tick();scroll.scrollTop=120;
+    tab('installed').click();await tick();scroll.scrollTop=120;
     const shortTab=tab('official');shortTab.focus({preventScroll:true});const shortTabY=shortTab.getBoundingClientRect().y, shortScroll=scroll.scrollTop;
     shortTab.click();await tick();
     check('short-tab-keeps-rail-position-without-downstream-spacer',scroll.scrollTop===shortScroll&&shortTab.getBoundingClientRect().y===shortTabY,{before:shortScroll,after:scroll.scrollTop,beforeY:shortTabY,afterY:shortTab.getBoundingClientRect().y});

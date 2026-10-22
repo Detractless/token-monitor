@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
-const { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, net, Notification, powerMonitor, protocol, screen, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, WebContentsView, clipboard, dialog, globalShortcut, ipcMain, nativeImage, nativeTheme, net, Notification, powerMonitor, protocol, screen, session, shell, systemPreferences } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { defaultDeviceId, generateHubSecret, lanIpv4Addresses, loadDotEnv, pidFilePath, readJson, sharedDataDir } = require('../shared/config');
 const {
@@ -5688,6 +5688,7 @@ function ensureNotchController() {
     onToggleRateMode: toggleDockRateMode,
     canRefreshLimits: () => canRefreshEdgeDockStats(),
     onRefreshLimits: () => refreshStatsFromEdgeDock(),
+    onWebSurfaceChanged: () => pluginRuntime?.refreshWebSurfaces(),
     installNonActivatingInput: (win) => preventAppActivation(win),
     blurAvailable: () => nativeTheme.prefersReducedTransparency !== true,
     applyBlurMask: (win, mask, display) => {
@@ -6107,6 +6108,7 @@ function ensureEdgeDockController() {
       return applyVibrancyMask(win, { buffer, pixelWidth, pixelHeight }, width, height);
     },
     primaryButtonDown: () => primaryButtonDown(process.platform),
+    onWebSurfaceChanged: () => pluginRuntime?.refreshWebSurfaces(),
     installNonActivatingInput: (win) => process.platform === 'darwin' ? preventAppActivation(win)
       : installWindowsNonActivatingInput(win, { logger: (message) => console.log(message) }),
     performHaptic: (pattern, performanceTime) => performMacHaptic({ pattern, performanceTime }),
@@ -9559,7 +9561,7 @@ app.whenReady().then(() => {
   function startPluginRuntime() {
     try {
       pluginRuntime = createPluginRuntime({
-        electron: { app, BrowserWindow, Notification, ipcMain, session, shell, dialog },
+        electron: { app, BrowserWindow, WebContentsView, powerMonitor, Notification, ipcMain, session, shell, dialog },
         userDataDir: app.getPath('userData'),
         getSettings: () => settings,
         applySettingsPatch,
@@ -9579,6 +9581,7 @@ app.whenReady().then(() => {
         getLocale: () => trayMenuLocale(),
         getContext: () => ({ mode, hubMode: settings.hubMode, hubUrl: settings.hubUrl, deviceId: settings.deviceId }),
         isMainSender: (event) => Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents),
+        surfaceContext: (event, surface) => surface === 'edgeDock' ? edgeDockController?.webSurface(event.sender) : surface === 'notch' ? notchController?.webSurface(event.sender) : null,
         isSurfaceSender: (event, surface) => {
           const win = BrowserWindow.fromWebContents(event.sender);
           return Boolean(win && (surface === 'edgeDock' ? edgeDockController?.owns(win) : notchController?.owns(win)));

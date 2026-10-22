@@ -8427,7 +8427,7 @@ html.native-liquid-glass .view-switcher-menu-item { border-radius: 9px; }
 .plugin-consent .checkbox-label input { flex-shrink: 0; }
 
 .plugin-catalog, .plugin-catalog-results { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.plugin-catalog-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; padding: 3px; border-radius: 7px; background: rgba(var(--overlay-rgb), .045); }
+.plugin-catalog-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; padding: 3px; border-radius: 7px; background: rgba(var(--overlay-rgb), .045); }
 .plugin-catalog-tabs button { min-width: 0; min-height: 30px; padding: 4px 2px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: .6875rem; cursor: pointer; overflow-wrap: anywhere; }
 .plugin-catalog-tabs button:hover { color: var(--text); background: rgba(var(--overlay-rgb), .04); }
 .plugin-catalog-tabs button[aria-selected="true"] { color: var(--text); background: rgba(var(--overlay-rgb), .1); }
@@ -8490,12 +8490,6 @@ html.native-liquid-glass .view-switcher-menu-item { border-radius: 9px; }
 .plugin-settings-list .plugin-inline-action:focus-visible, .plugin-settings-list .plugin-more:focus-visible { outline: 2px solid rgba(var(--accent-rgb), .32); outline-offset: 1px; }
 .plugin-source-route { justify-content: space-between; }
 .plugin-source-optional { margin-top: 8px; }
-.plugin-preview-group { padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
-.plugin-preview-label { display: block; margin-bottom: 8px; font-size: .625rem; color: var(--muted); }
-.plugin-style-advanced { border-top: 1px solid var(--line); padding-top: 12px; }
-.plugin-style-transfer { border-top: 1px solid var(--line); padding-top: 12px; }
-.plugin-style-actions { padding: 4px 0; flex-wrap: wrap; }
-.plugin-style-actions .plugin-menu-wrap { margin-left: auto; }
 
 .plugin-identity .plugin-origin-label { padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; font-size: .5625rem; white-space: nowrap; }
 
@@ -8529,3 +8523,11 @@ html.native-liquid-glass .view-switcher-menu-item { border-radius: 9px; }
 .notch-page-chips.drag-active > .notch-page-chip.dragging { z-index: 2; transform: translate(var(--drag-x, 0px), var(--drag-y, 0px)); transition: none; cursor: grabbing; }
 .notch-page-chips.drag-active > .notch-page-chip:not(.dragging) { opacity: .78; }
 .notch-page-chips.is-landing > .notch-page-chip { transition: none; }
+
+.plugin-page-designs { margin: 8px 0; }
+.plugin-web-replaced { display: none !important; }
+.plugin-page-designs select { max-width: 65%; }
+.plugin-web-panel { min-height: 120px; width: 100%; overflow: hidden; }
+
+.plugin-page-designs .settings-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 12px; }
+.plugin-page-designs .select-control-trigger { max-width: 65%; }

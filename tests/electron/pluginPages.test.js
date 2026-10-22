@@ -16,7 +16,7 @@ function fixture() {
   }
   const plugin = { id: 'demo', name: 'Demo', status: 'active', views: [
     { ref: 'demo/first', title: 'First', surfaces: ['page'] }, { ref: 'demo/second', title: 'Second', surfaces: ['page'] }] };
-  const manager = { list: () => ({ plugins: [plugin] }), onViews: () => () => {}, onChanged: () => () => {}, setSurfaceDemand: (surface, refs) => demands.push([surface, refs]) };
+  const manager = { payload: surface => ({ surface, views: Object.fromEntries((demands.at(-1)?.[1] || []).map(ref => [ref, { ref, status: 'ok' }])) }), list: () => ({ plugins: [plugin] }), onViews: () => () => {}, onChanged: () => () => {}, setSurfaceDemand: (surface, refs) => demands.push([surface, refs]) };
   const pages = createPluginPages({ BrowserWindow: Window, ipcMain: { handle: (id, fn) => handlers.set(id, fn), removeHandler: id => handlers.delete(id) }, manager,
     getSettings: () => ({ themeColors: { accent: '#abcdef' }, interfaceFontFamily: 'Georgia', displayFontFamily: 'Arial', reduceMotion: 'on', tokenNumberAnimation: 'count', secret: 'never expose' }), getLocale: () => 'en' });
   return { pages, handlers, windows, demands, messages, manager };
@@ -24,6 +24,7 @@ function fixture() {
 test('independent plugin pages follow native visibility and reuse their window', () => {
   const f = fixture(); f.pages.open('demo/first'); const win = f.windows[0]; win.emit('ready-to-show');
   assert.deepEqual(f.demands.at(-1), ['page', ['demo/first']]);
+  assert.equal(f.messages.at(-1).payload.views['demo/first'].status, 'ok');
   win.minimize(); assert.deepEqual(f.demands.at(-1), ['page', []]);
   f.pages.open('demo/second'); assert.equal(f.windows.length, 1); assert.deepEqual(f.demands.at(-1), ['page', ['demo/second']]);
   win.hide(); assert.deepEqual(f.demands.at(-1), ['page', []]);

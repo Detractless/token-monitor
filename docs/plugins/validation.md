@@ -66,7 +66,7 @@ On macOS after integrating main at `c3b38e779`:
 
 Actual isolated-app checks at 380 and 520 CSS px found no horizontal overflow in the four plugin settings tabs. Pointer and keyboard checks covered placement tooltip dismissal/navigation, action-menu Escape/focus restoration, Home/End, outside-click dismissal and style transfer. The menu shares existing App popup surface rules and positioning helpers; style colors use the existing 30×22 px inputs. Native-glass CSS parity was checked in Chromium fixtures, not accepted as physical macOS compositor proof.
 
-[Installed plugins](screenshots/installed.png) and [personal style editor](screenshots/style.png) show the visible plugin UI from temporary local acceptance data. Live usage totals and account details are excluded. The editor is scrollable; its screenshot shows the visible portion.
+Historical [installed plugins](screenshots/installed.png) and [personal style editor](screenshots/style.png) captures show the earlier plugin UI from temporary local acceptance data. Live usage totals and account details are excluded. The independent personal-style editor has since been removed; saved settings remain preserved.
 
 ## Boundaries that remain open
 
@@ -77,4 +77,17 @@ Actual isolated-app checks at 380 and 520 CSS px found no horizontal overflow in
 
 Worker creation itself is not claimed blocked: a native probe created a nested Worker. Network access remains constrained by the host/CSP/broker boundaries; the nested-Worker result did not establish a network escape.
 
-See the [capability matrix](plan.md) for implemented local behavior versus remaining authoring and distribution capabilities. The catalog is a first-version discovery/install workflow; folder loading alone is not a store. Rich author web pages remain a proposed follow-up, described in [the architecture comparison](author-ui-options.md).
+See the [capability matrix](plan.md) for implemented local behavior versus remaining authoring and distribution capabilities. The catalog is a first-version discovery/install workflow; folder loading alone is not a store. Authorized rich author web pages and surfaces are implemented; see [the current contract](author-ui-options.md).
+
+
+## Authored UI, continuous charts and retention follow-up
+
+Original model/tool/device content slots and optional Notch/Edge Dock rich surfaces use isolated packaged web documents. Main-App System Monitor remains declarative; its Rich Notch/Edge Dock declarations remain available. Declarative history sparklines can opt into continuous timestamped movement without increasing source cadence. The standalone personal-style editor is removed; App theme inheritance, author design and stored compatibility data remain.
+
+Hidden ready rich documents release subscriptions and freeze. Authors may specify any nonnegative safe-integer `retainMs`, default 30000, or `"until-evicted"` for no idle timeout. Count/memory limits and disable/reload/grant/owner invalidation override retention. Long finite durations use timer-safe monotonic chunks. Important state still needs durable storage.
+
+Final `npm run verify`: **7748 pass / 8 skip / 0 fail**. Prior frozen author-choice review: Node 63, Chromium 13, extended motion 25, cache 29, all passing. The final retention-only review independently passed Node 6 and timer probes; all newly added real-Chromium retention assertions passed. It is **bounded GO**, not whole-app/native acceptance.
+
+The final unmodified cache harness fails to capture a resumed child (`UnknownVizError`). Parent and reviewer scratch runs skipped only that screenshot to continue: 32 assertions passed, then the existing post-expiry cold-open step timed out before owner-close/uninstall checks. This final long integration flow is **not green**; previous owner-close/uninstall evidence does not replace it. No reproduced retention-delta blocker was identified. Keep the compositor/cold-start limitations open, alongside native hardware, Windows/Linux and packaging acceptance.
+
+See [author-choice review](evidence/author-choice-20261023/tm-author-independent-review.md), [final retention review](evidence/author-choice-20261023/tm-retention-independent-review.md) and [matched lightweight chart fixture](evidence/author-choice-20261023/comparison.png). The chart image uses synthetic samples in the production renderer, not a physical Notch capture. Reproduce with `scripts/test-plugin-smooth-charts.cjs`, `scripts/test-plugin-web-cache.cjs`, `scripts/test-plugin-web-ui.cjs`, `scripts/test-plugin-surface-web.cjs` and `scripts/test-system-monitor-rich-ui.cjs`, using the Electron launcher above. Start authoring at [the quickstart](author-quickstart.md).

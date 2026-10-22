@@ -11,6 +11,7 @@ const { normalizeLocalized, cleanText } = require('./localized');
 const { PERMISSIONS, PERMISSION_IDS, normalizeHostPattern, sourcePermission } = require('./permissions');
 const { normalizeView, normalizeBinding, isBinding } = require('./viewSpec');
 
+const { normalizeWebUi } = require('./webUi');
 const API_MAJOR = 1;
 const ID_RE = /^[a-z0-9][a-z0-9-]{1,39}$/;
 const VERSION_RE = /^\d{1,5}\.\d{1,5}\.\d{1,5}(?:-[0-9A-Za-z.-]{1,32})?$/;
@@ -223,11 +224,12 @@ function normalizeManifest(raw, { source = 'user' } = {}) {
   }
 
   const skins = normalizeSkins(raw.skins, errors);
+  const webUi = normalizeWebUi(raw.webUi, permissions, errors, views);
   const background = main && isObject(raw.background)
     ? Object.freeze({ intervalMs: intIn(raw.background.intervalSeconds, 5, 3600, 60) * 1000 }) : null;
   const visible = Object.freeze({ intervalMs: intIn(raw.visible?.intervalSeconds, 1, 60, 2) * 1000 });
 
-  if (!views.length && !skins.length && !alerts.length && !main) {
+  if (!views.length && !skins.length && !alerts.length && !main && !webUi?.documents.length) {
     errors.push('a plugin must contribute at least one view, skin, alert or main code');
     return { ok: false, manifest: null, errors };
   }
@@ -254,6 +256,7 @@ function normalizeManifest(raw, { source = 'user' } = {}) {
       views: Object.freeze(views),
       alerts: Object.freeze(alerts),
       skins: Object.freeze(skins),
+      webUi,
       visible,
       background
     })

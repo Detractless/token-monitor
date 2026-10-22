@@ -24,16 +24,21 @@ function createPluginPages({ BrowserWindow, ipcMain, manager, getSettings, getLo
   function visible(record) { return !record.win.isDestroyed() && record.win.isVisible() && !record.win.isMinimized(); }
   function syncDemand() {
     onDemand([...windows.values()].filter(visible).map(record => record.ref));
+    const payload = manager.payload('page');
+    for (const record of windows.values()) if (visible(record)) sendViews(record, payload);
   }
   function sendMeta(record) {
     if (record.win.isDestroyed()) return;
     record.win.webContents.send('pluginPage:meta', metadata(record));
   }
+  function sendViews(record, payload) {
+    record.win.webContents.send('pluginPage:views', { surface: 'page', appearance: payload.appearance, views: { [record.ref]: payload.views[record.ref] || { ref: record.ref, status: 'missing' } } });
+  }
   const offViews = manager.onViews((surface, payload) => {
     if (surface !== 'page') return;
     for (const record of windows.values()) {
       if (!visible(record)) continue;
-      record.win.webContents.send('pluginPage:views', { surface, appearance: payload.appearance, views: { [record.ref]: payload.views[record.ref] || { ref: record.ref, status: 'missing' } } });
+      sendViews(record, payload);
     }
   });
   const offChanged = manager.onChanged(() => { for (const record of windows.values()) sendMeta(record); syncDemand(); });

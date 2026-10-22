@@ -243,6 +243,20 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
   // Consent and placement run in main; the renderer never sees manifests,
   // plugin code or file paths beyond the plugins folder location.
   plugins: {
+    webSync: input => ipcRenderer.invoke('plugins:web:sync', input),
+    webSelect: (target, ref) => ipcRenderer.invoke('plugins:web:select', target, ref),
+    onWebRestore: callback => {
+      const listener = () => callback(); ipcRenderer.on('plugins:web:restore', listener);
+      return () => ipcRenderer.removeListener('plugins:web:restore', listener);
+    },
+    onWebReady: callback => {
+      const listener = () => callback(); ipcRenderer.on('plugins:web:ready', listener);
+      return () => ipcRenderer.removeListener('plugins:web:ready', listener);
+    },
+    onWebFailed: callback => {
+      const listener = (_event, reason) => callback(reason); ipcRenderer.on('plugins:web:failed', listener);
+      return () => ipcRenderer.removeListener('plugins:web:failed', listener);
+    },
     list: () => ipcRenderer.invoke('plugins:list'),
     setEnabled: (id, enabled) => ipcRenderer.invoke('plugins:setEnabled', { id, enabled }),
     setBackground: (id, enabled) => ipcRenderer.invoke('plugins:setBackground', { id, enabled }),
@@ -262,8 +276,6 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
     uninstall: (id, options) => ipcRenderer.invoke('plugins:uninstall', id, options),
     place: (ref, surface, placed) => ipcRenderer.invoke('plugins:place', { ref, surface, placed }),
     interact: (surface, ref, input, revision) => ipcRenderer.invoke('plugins:interact', { surface, ref, input, revision }),
-    appearance: () => ipcRenderer.invoke('plugins:appearance'),
-    setAppearance: value => ipcRenderer.invoke('plugins:setAppearance', value),
     skins: () => ipcRenderer.invoke('plugins:skins'),
     views: (surface) => ipcRenderer.invoke('plugins:views', { surface }),
     setDemand: (surface, refs) => ipcRenderer.send('plugins:demand', { surface, refs }),

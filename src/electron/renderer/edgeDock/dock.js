@@ -111,9 +111,13 @@ const pluginHost = pluginViewsApi && bridge.onPluginViews ? pluginViewsApi.creat
   t,
   onInteraction: (_surface, ref, input, revision) => bridge.interact(ref, input, revision),
   onDemand: (_surface, refs) => bridge.setPluginDemand(refs),
+  onMount: mount => surfaceWeb?.track(mount),
+  onPaint: mount => surfaceWeb?.prepare(mount),
   motionAllowed: () => !prefersReducedMotion(),
   motionMode: () => tokenNumberAnimationApi.normalize(appearance().tokenNumberAnimation)
 }) : null;
+const surfaceWeb = window.TokenMonitorPluginSurfaceWeb?.create({ document, window, bridge, surface: pluginSurface, kind: surface, t, stateFor: ref => pluginHost?.state(pluginSurface, ref), active: () => surface === 'notch' ? state.payload?.expanded === true : true, reducedMotion: prefersReducedMotion, maxHeight: () => state.payload?.maxCardHeight || window.innerHeight, onLayout: () => { if (surface === 'bubble' && state.payload) setTimeout(() => renderBubble(state.payload), 0); } });
+bridge.onWebSurfaceEscape?.(() => { if (surface === 'notch' || surface === 'bubble') bridge.dismiss(); });
 const pluginRailNumbers = window.TokenMonitorPluginRailNumbers.create({
   railNumbers: railNumberRollApi, animation: tokenNumberAnimationApi,
   viewFor: ref => pluginHost?.state('edgeDock', ref),
@@ -125,6 +129,7 @@ function updatePluginViews(payload) {
   if (payload?.surface !== pluginSurface) return;
   const numbers = surface === 'rail' ? pluginRailNumbers.capture(railNode) : null;
   pluginHost?.update(payload);
+  surfaceWeb?.refresh();
   if (surface === 'rail') pluginRailNumbers.update(railNode, numbers);
   // Re-measure the retained plugin card without replacing interactive nodes.
   if (surface === 'bubble' && state.payload?.cell?.kind === 'plugin') renderBubble(state.payload);
@@ -1914,6 +1919,7 @@ const notchRenderer = surface === 'notch'
 function render(payload) {
   if (!payload || payload.surface !== surface) return;
   state.payload = payload;
+  surfaceWeb?.refresh();
   applyAppearance(payload);
   notchRenderer?.applyAppearance(payload);
   if (surface === 'notch') notchRenderer.applyMotion(payload.motion);

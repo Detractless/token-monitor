@@ -41,7 +41,7 @@ function toneFor(value, steps) {
 
 // read(sourceId) → { value, at } | null; history(sourceId, count, field) → [].
 // `@metric` sources resolve inside the plugin's own namespace.
-function createResolver({ read, history, pluginId, locale = 'en', sanitizeDraw = (list) => list, sanitizeRows = (rows) => rows, budget = { bytes: 256 * 1024, draws: 800, nodes: 200 } }) {
+function createResolver({ read, history, historyPoints = () => [], sourceInterval = () => 2000, pluginId, locale = 'en', sanitizeDraw = (list) => list, sanitizeRows = (rows) => rows, budget = { bytes: 256 * 1024, draws: 800, nodes: 200 } }) {
   function spend(value, draws = 0) {
     // Count the expanded value, including repeated references to one metric.
     budget.bytes -= (JSON.stringify(value)?.length || 0) * 3;
@@ -111,6 +111,10 @@ function createResolver({ read, history, pluginId, locale = 'en', sanitizeDraw =
       if (name === 'type' || name === 'children') continue;
       out[name] = roles[name] ? resolveProp(roles[name], value) : value;
       if (!['draw', 'rows'].includes(roles[name])) spend(out[name]);
+    }
+    if (node.type === 'sparkline' && node.smooth && node.series?.history && node.series.$) {
+      out.seriesPoints = spend(historyPoints(sourceId(node.series), node.series.history, node.series.field || '').map(p => ({ at: p.at, value: p.value })));
+      out.seriesIntervalMs = Math.max(250, Math.min(60000, sourceInterval(sourceId(node.series)) || 2000));
     }
     if (node.type === 'stat') {
       const number = resolveProp('number', node.value);

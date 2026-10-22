@@ -3154,3 +3154,21 @@ test('attached glass stays dark with a light widget while capsules retain their 
   assert.equal(updates.get(f.windows[0]).tintOpacity, 0, 'reattaching removes the duplicate native tint');
   assert.equal(f.preferences.macClearGlassTint, 64, 'the saved preference is never rewritten');
 });
+
+
+test('rich document preparation is allowed only during an explicit opening, never collapse', t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'], now: 10000 });
+  const f = fixture(t, {}, { reducedMotion: false });
+  const host = notchWindow(f).webContents;
+  assert.equal(f.controller.webSurface(host).preparing, false);
+  f.screen.point = { x: 735, y: 10 }; f.controller.poll(Date.now());
+  press(f);
+  assert.equal(f.controller.webSurface(host).preparing, true);
+  assert.equal(f.controller.webSurface(host).visible, false);
+  const animation = notchWindow(f).messages.filter(message => message.channel === 'topNotch:animate').at(-1).payload;
+  f.ipcMain.emit('topNotch:frame', { sender: host }, { id: animation.id, elapsed: animation.duration });
+  assert.equal(f.controller.webSurface(host).visible, true);
+  f.ipcMain.emit('topNotch:dismiss', { sender: host });
+  assert.equal(f.controller.webSurface(host).preparing, false);
+  assert.equal(f.controller.webSurface(host).visible, false);
+});

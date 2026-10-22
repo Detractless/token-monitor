@@ -264,7 +264,7 @@ const COMPONENTS = Object.freeze({
   stat: { props: { label: PROP_KINDS.text, value: PROP_KINDS.text, unit: PROP_KINDS.text, caption: PROP_KINDS.text, tone: PROP_KINDS.tone, size: enumKind(['s', 'm', 'l']), flex: FLEX } },
   meter: { props: { value: PROP_KINDS.number, label: PROP_KINDS.text, caption: PROP_KINDS.text, tone: PROP_KINDS.tone, flex: FLEX } },
   ring: { props: { value: PROP_KINDS.number, label: PROP_KINDS.text, caption: PROP_KINDS.text, tone: PROP_KINDS.tone, size: intKind(24, 120), flex: FLEX } },
-  sparkline: { props: { series: PROP_KINDS.series, tone: PROP_KINDS.tone, height: intKind(12, 160), min: PROP_KINDS.number, max: PROP_KINDS.number, fill: PROP_KINDS.bool, flex: FLEX } },
+  sparkline: { props: { smooth: PROP_KINDS.bool, windowMs: intKind(1000, 3600000), series: PROP_KINDS.series, tone: PROP_KINDS.tone, height: intKind(12, 160), min: PROP_KINDS.number, max: PROP_KINDS.number, fill: PROP_KINDS.bool, flex: FLEX } },
   bars: { props: { series: PROP_KINDS.series, tone: PROP_KINDS.tone, height: intKind(12, 160), min: PROP_KINDS.number, max: PROP_KINDS.number, flex: FLEX } },
   text: { props: { text: PROP_KINDS.text, tone: PROP_KINDS.tone, size: enumKind(['xs', 's', 'm', 'l', 'xl']), weight: enumKind(['regular', 'medium', 'bold']), mono: PROP_KINDS.bool, align: enumKind(['start', 'center', 'end']), flex: FLEX } },
   badge: { props: { text: PROP_KINDS.text, tone: PROP_KINDS.tone } },
