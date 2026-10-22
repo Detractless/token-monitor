@@ -2,11 +2,33 @@
 
 The iOS app is a read-only SwiftUI client for an existing Token Monitor Hub. It does not run collectors or store provider credentials.
 
+## Status and source builds
+
+The source is available here under the repository's [MIT license](../../LICENSE). It is an experimental companion app: repository inclusion and green CI do not mean an App Store or TestFlight build is available. Desktop installers do not include the iOS app. See [RELEASING.md](RELEASING.md) for distribution preparation and the remaining device, signing and Widget API checks.
+
 ## Requirements
 
 - Xcode 26 or later
 - iOS 26 or later
-- Swift 6
+- Swift 6.2 (included with Xcode 26)
+
+## Run locally
+
+1. Clone the repository and open `apps/ios/TokenMonitor.xcodeproj` in Xcode. Use the shared **TokenMonitor** scheme. The iOS project has no third-party package dependencies and does not need `npm install` to build.
+2. Choose an installed iPhone Simulator with iOS 26 or later and run. For reproducible preview data, add `--sample-data` to the Debug scheme's launch arguments; remove it to use your Hub.
+3. For a physical device, select your own signing team for both the app and Widget extension. If the checked-in bundle IDs/App Group are unavailable to that team, use matching identifiers and update both entitlements plus `SharedSnapshotStore.appGroupIdentifier` (in `Shared/SharedSnapshotStore.swift`). Enable the matching App Group on both targets and Push Notifications on the app. Keep signing material outside Git.
+4. In Settings → Hub, enter your Hub URL and shared secret. Start a Hub using the root [setup guide](../../README.md#multi-device-sync); a device must be able to reach it over HTTPS or the local network. `localhost` on an iPhone refers to that iPhone, not the Mac. iCloud Drive sync is not an iOS Hub endpoint.
+
+The app does not collect usage by itself: run Token Monitor Desktop or the headless agent on the machines running your tools. Remote Live Activity updates additionally require Hub APNs configuration; ordinary foreground usage/limits and cached widgets do not.
+
+## Screenshots
+
+Debug sample data on an iPhone Simulator; the readings are illustrative. These are repository previews, not App Store screenshots or physical-device acceptance evidence.
+
+<p>
+  <img src="docs/screenshots/overview.png" width="280" alt="Overview with sample token usage, quota cards and recent sessions">
+  <img src="docs/screenshots/limits.png" width="280" alt="AI Limits showing sample provider quota windows and plan labels">
+</p>
 
 ## Architecture
 
@@ -43,7 +65,7 @@ WorkBuddy groups can optionally show a combined quota in Customize AI Limits. Th
 
 The Home Screen gallery offers Liquid Glass, Transparent and Solid widgets with the same content options; Solid also supports Lock Screen accessories. Full-color wallpaper transparency and host blur currently use an isolated private WidgetKit descriptor bridge because the public removable container background does not provide those effects in full-color mode. The bridge is guarded and falls back to WidgetKit's opaque host if its runtime contract is unavailable, but it is not a supported App Store API. Small widgets pair one dominant reading with a daily-usage bar series, a compact second quota window, or the activity grid; medium adds top-tool columns or two quota-account columns; a single quota account expands its windows. Large adds stat rows and tool/model or a height-fitting provider/account list. Explicit quota-provider selection retains every matching account rather than only the first. Plan labels align trailing and per-account freshness sits beneath the identity, matching Desktop. Multi-account email labels are masked before entering the App Group cache. Settings → Widgets previews the real widget view at each size from the latest Hub snapshot. Medium widgets offer paired or stacked quota windows and chart-first or stats-and-chart activity layouts. The activity calendar uses compact squares with Desktop's maximum-relative intensity bands and month labels below the grid; the large family shows two chronological half-year strips. Shared defaults also control reset time and text contrast. Widgets using App Default follow those preferences, while explicit per-widget overrides retain precedence. Edit Widget includes an explicit All providers choice that overrides a named app default. Choose the background kind and size on the Home Screen. Live Activity source, account, window and display choices are available inline below the appearance gallery. Lock Screen accessories show compact usage or quota readings. Live Activities provide separate Lock Screen and Dynamic Island layouts, and mark expired content as stale. In Settings → Live Activity, each side of the compact island, the presentation shown beside other activities, and the expanded and Lock Screen layouts each pair an appearance with a data source — like the desktop menu bar: an automatic AI tool (lowest remaining or most recently used) or a named one, an account, a quota window, remaining or used, a period, and all tools or only the recent one.
 
-Widgets read the latest App Group snapshot. The app publishes while connected, and iOS may run a background refresh; WidgetKit and Background Tasks choose their own update budgets. A widget timeline is not a continuous Hub connection. Remote Live Activity updates require a Hub/Worker built from this iOS branch, APNs configuration and a successful push-token registration. The v0.71.0 mainline Hub has no `/api/live-activities/register` route; connecting to that build retains foreground updates but cannot enable remote pushes. A simulator build or local Activity update does not verify remote delivery.
+Widgets read the latest App Group snapshot. The app publishes while connected, and iOS may run a background refresh; WidgetKit and Background Tasks choose their own update budgets. A widget timeline is not a continuous Hub connection. Remote Live Activity updates require a Hub/Worker built from this iOS branch, APNs configuration and a successful push-token registration. Older Hub builds without `/api/live-activities/register` retain foreground updates but cannot enable remote pushes. Use a Hub/Worker built from the integrated source for remote updates. A simulator build or local Activity update does not verify remote delivery.
 
 The icon-only native tab bar provides Overview, Limits, Sessions, Insights and Settings with Desktop vector artwork and localized accessibility names. Overview adds up to three recent interactive sessions, prioritizing running sessions, and its Sections editor can reorder or hide that block. Sessions deep links open the root tab. Settings keeps Hub first, followed by compact Live Activity and Widgets rows showing their purpose and status. Full previews and controls live in their customizer pages; Widget counts reflect WidgetKit’s current configurations, with unavailable results kept distinct from zero. A dismissible Overview invitation appears when both surfaces are unused.
 
@@ -51,24 +73,31 @@ The Sessions screen shows bounded today/month summaries from authenticated Hub s
 
 Untitled session rows put the tool and model on the same first line, matching the desktop fallback. The optional live speed beside the Overview brand mark uses differences in each device's timed output and timed duration between Hub frames. It is separate from the period's average speed: without consecutive timed samples it shows a dash, and an idle reading dims before clearing.
 
-## Local validation
+## Distribution preparation
+
+See [RELEASING.md](RELEASING.md) for the production Widget API decision, privacy declarations, candidate/signing setup, local archive/export checks, physical-device acceptance and the separate upload/publication steps. The current private full-color Widget host bridge is still a distribution blocker; the preparation does not change its appearance or upload a build.
+
+## Local validation and CI
+
+From the repository root, list destinations and copy the identifier of an installed iOS 26+ iPhone Simulator:
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
-  -project apps/ios/TokenMonitor.xcodeproj -scheme TokenMonitor \
-  -destination 'platform=iOS Simulator,name=iPhone 18 Pro' \
+xcodebuild -project apps/ios/TokenMonitor.xcodeproj -scheme TokenMonitor -showdestinations
+# Replace SIMULATOR_UDID with an available destination from the command above.
+xcodebuild -project apps/ios/TokenMonitor.xcodeproj -scheme TokenMonitor \
+  -destination 'platform=iOS Simulator,id=SIMULATOR_UDID' \
   -derivedDataPath /tmp/token-monitor-ios-build CODE_SIGNING_ALLOWED=NO test
+
+# Hub / shared / Worker regression tests require the root Node dependencies.
+npm ci
 npm run verify
 ```
 
-Debug builds accept `--sample-data` and `--sample-tab=overview|limits|sessions|insights|settings` for reproducible UI inspection without Hub credentials. `--sample-empty-sessions` gives a connected Hub with empty today/month session lists. `--sample-live-activity` also renders a local demonstration Activity. These options are compiled out of release builds.
+[The iOS workflow](../../.github/workflows/ios.yml) runs native tests and an unsigned Release device archive for iOS or Hub/shared source changes on pull requests and pushes to `main`. It selects an available iPhone Simulator rather than requiring a particular model, checks that both privacy manifests are bundled, and retains logs and the `.xcresult` for seven days. It needs no repository secrets or Apple account. It can also be started with **Actions → iOS → Run workflow** after the workflow reaches the default branch. The existing Node CI continues to validate Hub and Worker behavior.
 
+This workflow is a source-integration check. It does not sign, export, upload, run the distribution verifier, or establish App Store eligibility. The current private Widget host bridge is deliberately retained; the separate [distribution check](RELEASING.md#local-archive-checks) continues to reject it. No iOS upload is attached to the desktop `v*` tag workflow.
 
-## Refresh validation (2026-10-05)
-
-The refreshed app and Widget extension build successfully with Xcode 27 on the iPhone 18 Pro simulator. The full native test target passes 33 tests in 11 suites, including Hub destination races, SSE ordering, trailing surface updates, Activity registration cleanup, source freshness, missing-vs-zero readings, sessions and credits balances. Root `npm run verify` passes 5,917 tests with two skips. Hub and Worker generated sources were refreshed and match their build identities.
-
-Simulator screenshots and runtime accessibility snapshots are saved under `/private/tmp/ios-refresh-artifacts`; these use illustrative data. The final rebuild also compiles complete Traditional Chinese, Simplified Chinese, Japanese and Korean translations for the redesigned surfaces. Hardware APNs delivery and system-selected widget clear/tinted appearances still need a configured device check.
+Debug builds accept `--sample-data` and `--sample-tab=overview|limits|sessions|insights|settings` for reproducible UI inspection without Hub credentials. `--sample-empty-sessions` gives a connected Hub with empty today/month session lists. `--sample-live-activity` also renders a local demonstration Activity. These options are compiled out of Release builds.
 
 ### Shared model presentation
 

@@ -12,6 +12,7 @@ DerivedData/
 .swiftpm/
 *.hmap
 *.ipa
+*.xcarchive/
 *.dSYM
 *.dSYM.zip
 

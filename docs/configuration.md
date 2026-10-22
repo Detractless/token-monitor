@@ -95,11 +95,15 @@ The widget reads most settings as first-run defaults. WorkBuddy follows the same
 
 The iOS Live Activity registers its ActivityKit push token with the authenticated Hub. When APNs credentials are configured, the Hub sends a remote ActivityKit update after new data is ingested, so the Dynamic Island can update while the iOS app is suspended. Set `TOKEN_MONITOR_APNS_KEY_ID`, `TOKEN_MONITOR_APNS_TEAM_ID`, and either `TOKEN_MONITOR_APNS_PRIVATE_KEY_FILE` or `TOKEN_MONITOR_APNS_PRIVATE_KEY`; the bundle id must match the signed iOS app. The Hub coalesces updates at `TOKEN_MONITOR_APNS_MIN_INTERVAL_MS` (15 seconds by default) to respect ActivityKit's system budget. APNs delivery remains best-effort, and the existing iOS background refresh remains a fallback. The Hub also refreshes registered activities after device deletion. `/api/health` reports `liveActivityPushEnabled`, and registration returns `pushEnabled`; these indicate configuration, not confirmed delivery. Each APNs request has a 10-second timeout. Failed deliveries are retried on the next registration or data update; invalid tokens are removed. Keep the private key on the Hub, use `sandbox` for development-signed apps and `production` for distribution-signed apps, and check the app's registration status before testing an ingest-triggered push.
 
+### Node Hub persistence and shutdown
+
 The standalone Node Hub accepts `--persistIntervalMs` or `TOKEN_MONITOR_PERSIST_INTERVAL_MS`. Values must be finite numbers from `0` through `2147483647` milliseconds; invalid values fail startup. The CLI flag requires a nonblank value, such as `--persistIntervalMs=300000`; a missing value fails startup even when the environment variable is valid. Leave it at `0` to save synchronously after each upload. A positive value, such as `300000`, batches usage snapshots at a fixed deadline after the first pending upload; continuous uploads do not reset it. API/SSE reads still update immediately. A failed timer save is logged and keeps the latest records pending for the next upload batch or normal shutdown. File-based readers can lag by the interval while writes succeed, and abrupt termination can lose updates accepted since the last save. Device deletion, subscription edits, shared settings and title policy changes save immediately.
 
 On SIGINT/SIGTERM, the Node Hub saves pending usage before waiting for already-admitted uploads, rejects new requests, ends SSE streams, and saves again after draining. Remaining HTTP connections are force-closed after a five-second drain target; a busy event loop can delay this timer. A failed final save is reported with a nonzero exit code. SIGKILL and crashes cannot run this shutdown path.
 
-One-shot run (collect once and exit — useful for cron / launchd):
+### One-shot agent
+
+Collect once and exit (useful for cron / launchd):
 
 ```bash
 npm run agent -- --clients=claude,codex,opencode --once
