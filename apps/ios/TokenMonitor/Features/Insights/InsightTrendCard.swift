@@ -74,7 +74,7 @@ struct InsightTrendCard: View {
         .task {
             #if DEBUG
             guard ProcessInfo.processInfo.arguments.contains("--sample-trend-select") else { return }
-            selection = buckets.dropFirst(buckets.count / 2).first?.dateValue
+            selection = buckets.dropFirst(buckets.count / 2).first?.localDateValue
             #endif
         }
         .onChange(of: activeRange) { _, _ in selection = nil }
@@ -121,7 +121,7 @@ struct InsightTrendCard: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            Text("Peak \(formatted(peakValue))")
+            Text("Peak \(formatted(peakValue, unpricedTokens: peakUnpricedTokens))")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
@@ -129,13 +129,13 @@ struct InsightTrendCard: View {
 
     private var headlineValue: String {
         if let day = selectedBucket {
-            return formatted(activeMetric == .tokens ? day.tokens ?? 0 : day.cost ?? 0)
+            return formatted(activeMetric == .tokens ? day.tokens ?? 0 : day.cost ?? 0, unpricedTokens: day.unpricedTokens)
         }
-        return formatted(rangeTotal)
+        return formatted(rangeTotal, unpricedTokens: validDays.compactMap(\.unpricedTokens).reduce(0, +))
     }
 
     private var headlineCaption: String {
-        if let day = selectedBucket, let date = day.dateValue {
+        if let day = selectedBucket, let date = day.localDateValue {
             return date.formatted(
                 .dateTime.weekday(.abbreviated).month(.abbreviated).day()
                     .locale(locale)
@@ -147,8 +147,8 @@ struct InsightTrendCard: View {
     private var selectedBucket: HistoryDay? {
         guard let selection else { return nil }
         return buckets.min {
-            abs(($0.dateValue ?? .distantPast).timeIntervalSince(selection))
-                < abs(($1.dateValue ?? .distantPast).timeIntervalSince(selection))
+            abs(($0.localDateValue ?? .distantPast).timeIntervalSince(selection))
+                < abs(($1.localDateValue ?? .distantPast).timeIntervalSince(selection))
         }
     }
 
@@ -163,43 +163,20 @@ struct InsightTrendCard: View {
         ) else { return [] }
         return (history.daily ?? [])
             .filter { day in
-                guard let date = day.dateValue, date >= cutoff else { return false }
+                guard let date = day.localDateValue, date >= cutoff else { return false }
                 let value = activeMetric == .tokens ? day.tokens : day.cost
                 return value.map { $0.isFinite && $0 >= 0 } ?? false
             }
-            .sorted { ($0.dateValue ?? .distantPast) < ($1.dateValue ?? .distantPast) }
+            .sorted { ($0.localDateValue ?? .distantPast) < ($1.localDateValue ?? .distantPast) }
     }
 
     private var buckets: [HistoryDay] {
         if !activeRange.aggregatesWeekly {
             return validDays
         }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .current
-        let dayFormatter = DateFormatter()
-        dayFormatter.calendar = calendar
-        dayFormatter.locale = Locale(identifier: "en_US_POSIX")
-        dayFormatter.timeZone = calendar.timeZone
-        dayFormatter.dateFormat = "yyyy-MM-dd"
-
-        let grouped = Dictionary(grouping: validDays) { day in
-            calendar.dateInterval(of: .weekOfYear, for: day.dateValue ?? .distantPast)?.start
-                ?? .distantPast
+        return UsageHistory.weeklyBuckets(validDays).filter { day in
+            (activeMetric == .tokens ? day.tokens : day.cost)?.isFinite == true
         }
-        return grouped.compactMap { start, days -> HistoryDay? in
-            let tokens = days.compactMap(\.tokens).reduce(0, +)
-            let cost = days.compactMap(\.cost).reduce(0, +)
-            let value = activeMetric == .tokens ? tokens : cost
-            guard value.isFinite else { return nil }
-            return HistoryDay(
-                date: dayFormatter.string(from: start),
-                tokens: days.allSatisfy { $0.tokens == nil } ? nil : tokens,
-                cost: days.allSatisfy { $0.cost == nil } ? nil : cost,
-                messages: nil,
-                activeTimeMs: nil
-            )
-        }
-        .sorted { ($0.dateValue ?? .distantPast) < ($1.dateValue ?? .distantPast) }
     }
 
     private var rangeTotal: Double {
@@ -212,9 +189,14 @@ struct InsightTrendCard: View {
         buckets.map { activeMetric == .tokens ? $0.tokens ?? 0 : $0.cost ?? 0 }.max() ?? 0
     }
 
-    private func formatted(_ value: Double) -> String {
+    private var peakUnpricedTokens: Double {
+        // Any unpriced bucket can exceed the largest known subtotal.
+        buckets.compactMap(\.unpricedTokens).reduce(0, +)
+    }
+
+    private func formatted(_ value: Double, unpricedTokens: Double? = nil) -> String {
         activeMetric == .tokens
             ? MetricFormatter.tokens(value)
-            : MetricFormatter.currencyFromUSD(value, currency: preferences.currency)
+            : MetricFormatter.historyCostFromUSD(value, unpricedTokens: unpricedTokens, currency: preferences.currency)
     }
 }

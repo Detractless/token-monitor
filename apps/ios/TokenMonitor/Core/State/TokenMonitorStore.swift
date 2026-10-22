@@ -95,6 +95,12 @@ final class TokenMonitorStore {
         displayPeriods[period.rawValue] ?? stats?.period(period) ?? .unknown
     }
 
+    func systemSurfaceSnapshot(limitProviderOrder: [String], hiddenLimitProviders: Set<String>) -> TokenMonitorSharedPayload.Snapshot? {
+        guard configuration != nil, let stats else { return nil }
+        return .make(stats: stats, history: currentHistory, limitProviderOrder: limitProviderOrder,
+                     hiddenLimitProviders: hiddenLimitProviders)
+    }
+
     func liveOutputRate(at date: Date = .now) -> LiveTokenRateTracker.Reading? {
         guard stats != nil else { return nil }
         return liveRateTracker.reading(at: date)
@@ -112,6 +118,7 @@ final class TokenMonitorStore {
             var result = period
             result.models = ModelAliasSettings.fold(period.models, using: resolver)
             result.modelCosts = ModelAliasSettings.fold(period.modelCosts, using: resolver)
+            result.modelUnpricedTokens = ModelAliasSettings.fold(period.modelUnpricedTokens, using: resolver)
             result.sessions = period.sessions?.map { key, session in
                 var result = session
                 if session.client == "cursor" {

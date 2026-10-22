@@ -24,6 +24,8 @@ nonisolated struct TokenMonitorSharedPayload: Codable, Equatable, Sendable {
         let allTime: Usage
         let limits: [Limit]
         let activity: [Day]
+        /// Local calendar key of the usage report; never advance it while rendering a cached snapshot.
+        var todayDate: String? = nil
         var sourceStale: Bool? = nil
         /// Running sessions for the Live Activity; nil in caches written before it existed.
         var agents: TokenMonitorActivityAttributes.ContentState.Agents? = nil

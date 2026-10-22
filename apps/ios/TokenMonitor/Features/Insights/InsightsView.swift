@@ -171,7 +171,7 @@ private struct MonthlyHistoryCard: View {
                     .bold()
                     .monospacedDigit()
                 Text(month.cost.map {
-                    MetricFormatter.currencyFromUSD($0, currency: currency)
+                    MetricFormatter.historyCostFromUSD($0, unpricedTokens: month.unpricedTokens, currency: currency)
                 } ?? "—")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -207,7 +207,7 @@ private struct MonthlyHistoryCard: View {
     }
 
     private func monthTitle(_ month: HistoryMonth) -> String {
-        month.dateValue?.formatted(.dateTime.month(.wide).year())
+        month.localDateValue?.formatted(.dateTime.month(.wide).year())
             ?? month.month
             ?? "Unknown month"
     }

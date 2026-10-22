@@ -149,7 +149,7 @@ struct TokenMonitorStoreTests {
         let a = configuration("a"), b = configuration("b")
         func snapshot(_ tokens: Int, _ revision: Int) throws -> HubStats {
             try JSONDecoder().decode(HubStats.self, from: Data("""
-            {"syncSettingsRevisions":{"modelAliases":\(revision)},"periods":{"today":{"totalTokens":\(tokens),"models":{"vendor/model":\(tokens)},"modelCosts":{"vendor/model":0.00123},"sessions":{"one":{"models":{"vendor/model":\(tokens)},"totalTokens":\(tokens)}}}}}
+            {"syncSettingsRevisions":{"modelAliases":\(revision)},"periods":{"today":{"totalTokens":\(tokens),"models":{"vendor/model":\(tokens)},"modelCosts":{"vendor/model":0.00123},"modelUnpricedTokens":{"vendor/model":\(tokens / 2)},"sessions":{"one":{"models":{"vendor/model":\(tokens)},"totalTokens":\(tokens)}}}}}
             """.utf8))
         }
         store.configure(a)
@@ -162,6 +162,8 @@ struct TokenMonitorStoreTests {
         await client.completeAliases(0, ModelAliasDocument(revision: 1, value: ModelAliasSettings(modelAliases: ["vendor/model": "Alias"])))
         try #require(await coreEventually { store.currentPeriod.models?["Alias"] == 20 })
         #expect(store.currentPeriod.modelCosts?["Alias"] == 0.00123)
+        #expect(store.currentPeriod.modelEntries.first?.unpricedTokens == 10)
+        #expect(store.stats?.period(.today).modelUnpricedTokens?["vendor/model"] == 10)
         #expect(store.currentPeriod.sessions?["one"]?.models?["Alias"] == 20)
         #expect(store.stats?.period(.today).models?["vendor/model"] == 20)
         await client.send(try snapshot(30, 2), to: a)
@@ -259,4 +261,18 @@ func coreEventually(_ predicate: @MainActor () async -> Bool) async -> Bool {
         do { try await Task.sleep(for: .milliseconds(1)) } catch { return false }
     }
     return false
+}
+
+
+extension TokenMonitorStoreTests {
+    @Test func previewDataWithoutAConfiguredDestinationCannotBecomeOperational() async {
+        let store = TokenMonitorStore(client: ControlledHubClient(), systemSurfaces: RecordingSurfaces())
+        store.stats = .sample
+        #expect(store.systemSurfaceSnapshot(limitProviderOrder: [], hiddenLimitProviders: []) == nil)
+        let controller = LiveActivityController()
+        var preferences = TokenMonitorSharedPayload.Preferences.default
+        preferences.liveActivityEnabled = true
+        await controller.setEnabled(true, snapshot: .make(stats: .sample, history: .sample), preferences: preferences)
+        #expect(controller.errorMessage == String(localized: "Connect to a Hub before starting Live Activity."))
+    }
 }

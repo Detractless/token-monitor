@@ -1,4 +1,4 @@
-import { liveActivityStaleDate } from './shared/liveActivity.js';
+import { liveActivityPushBody } from './shared/liveActivity.js';
 
 const DEFAULT_BUNDLE_ID = 'com.javis.tokenmonitor.ios';
 
@@ -115,14 +115,7 @@ function createLiveActivityPushClient({
         'apns-priority': '10',
         'apns-expiration': '0'
       },
-      body: JSON.stringify({
-        aps: {
-          timestamp,
-          event: 'update',
-          'stale-date': liveActivityStaleDate(contentState, timestamp),
-          'content-state': contentState
-        }
-      })
+      body: liveActivityPushBody(contentState, timestamp)
     });
     let body = null;
     try { body = await response.json(); } catch (_) { /* APNs may return an empty body. */ }

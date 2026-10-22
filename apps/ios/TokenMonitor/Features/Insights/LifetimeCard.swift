@@ -24,7 +24,7 @@ struct LifetimeCard: View {
                 headlineStat(
                     "Total cost",
                     value: summary?.totalCost.map {
-                        MetricFormatter.currencyFromUSD($0, currency: preferences.currency)
+                        MetricFormatter.historyCostFromUSD($0, unpricedTokens: summary?.unpricedTokens, currency: preferences.currency)
                     } ?? "—"
                 )
             }

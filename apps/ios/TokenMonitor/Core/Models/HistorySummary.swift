@@ -3,6 +3,7 @@ import Foundation
 nonisolated struct HistorySummary: Decodable, Sendable {
     let totalTokens: Double?
     let totalCost: Double?
+    var unpricedTokens: Double? = nil
     let activeDays: Double?
     let currentStreak: Double?
     let longestStreak: Double?

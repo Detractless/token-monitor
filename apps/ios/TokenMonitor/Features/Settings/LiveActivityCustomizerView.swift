@@ -126,11 +126,10 @@ struct LiveActivityCustomizerView: View {
 
     // MARK: - Preview data
 
-    /// Live snapshot when the Hub is connected, sample data otherwise — the
-    /// same source the running activity renders.
+    /// Preview-only sample fallback. Operational publication never uses it.
     private var previewContext: ActivityContext {
         var state = LiveActivityController.contentState(
-            snapshot: latestSnapshot(),
+            snapshot: previewSnapshot(),
             preferences: preferences.sharedPreferences
         )
         if store.stats == nil, state.agents.running == 0 {
@@ -143,16 +142,15 @@ struct LiveActivityCustomizerView: View {
         )
     }
 
-    private func latestSnapshot() -> TokenMonitorSharedPayload.Snapshot {
-        if let stats = store.stats {
-            return TokenMonitorSharedPayload.Snapshot.make(
-                stats: stats,
-                history: store.currentHistory,
-                limitProviderOrder: preferences.limitProviderOrder,
-                hiddenLimitProviders: preferences.hiddenLimitProviders
-            )
-        }
-        return TokenMonitorSharedPayload.Snapshot.make(stats: .sample, history: .sample)
+    private var operationalSnapshot: TokenMonitorSharedPayload.Snapshot? {
+        store.systemSurfaceSnapshot(limitProviderOrder: preferences.limitProviderOrder,
+                                    hiddenLimitProviders: preferences.hiddenLimitProviders)
+    }
+
+    private func previewSnapshot() -> TokenMonitorSharedPayload.Snapshot {
+        .make(stats: store.stats ?? .sample, history: store.stats == nil ? .sample : store.currentHistory,
+              limitProviderOrder: preferences.limitProviderOrder,
+              hiddenLimitProviders: preferences.hiddenLimitProviders)
     }
 
     // MARK: - Stage
@@ -820,15 +818,15 @@ struct LiveActivityCustomizerView: View {
     private func setEnabled(_ enabled: Bool) async {
         await liveActivity.setEnabled(
             enabled,
-            snapshot: latestSnapshot(),
+            snapshot: operationalSnapshot,
             preferences: preferences.sharedPreferences
         )
     }
 
     private func refresh() async {
-        guard preferences.liveActivityEnabled else { return }
+        guard preferences.liveActivityEnabled, let snapshot = operationalSnapshot else { return }
         await liveActivity.update(
-            snapshot: latestSnapshot(),
+            snapshot: snapshot,
             preferences: preferences.sharedPreferences
         )
     }

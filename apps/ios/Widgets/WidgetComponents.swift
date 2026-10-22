@@ -347,9 +347,6 @@ struct WidgetWindowColumn: View {
 
     /// "82% left" in fixed desktop English, or the provider-currency amount.
     var valueText: String {
-        if let fraction = WidgetPresentation.fraction(window.remainingPercent, total: 100) {
-            return WidgetPresentation.remaining(fraction * 100, locale: WidgetPresentation.desktopQuotaLocale)
-        }
         if let amount = window.amount, amount.isFinite {
             guard let currency = window.currency, !currency.isEmpty else {
                 return amount.formatted(
@@ -360,19 +357,21 @@ struct WidgetWindowColumn: View {
                 amount, sourceCode: currency, displayCode: currency, locale: locale
             )
         }
+        if let fraction = WidgetPresentation.fraction(window.remainingPercent, total: 100) {
+            return WidgetPresentation.remaining(fraction * 100, locale: WidgetPresentation.desktopQuotaLocale)
+        }
         return "—"
     }
 
-    /// "82%" (or the credits amount) — the headline without the "left" tail.
     var shortValueText: String {
-        if let fraction = WidgetPresentation.fraction(window.remainingPercent, total: 100) {
-            return WidgetPresentation.percent(fraction * 100, locale: WidgetPresentation.desktopQuotaLocale)
+        if isPercent, let percent = window.remainingPercent {
+            return WidgetPresentation.percent(percent, locale: WidgetPresentation.desktopQuotaLocale)
         }
         return valueText
     }
 
     var isPercent: Bool {
-        WidgetPresentation.fraction(window.remainingPercent, total: 100) != nil
+        window.amount == nil && WidgetPresentation.fraction(window.remainingPercent, total: 100) != nil
     }
 
     var fraction: Double? {

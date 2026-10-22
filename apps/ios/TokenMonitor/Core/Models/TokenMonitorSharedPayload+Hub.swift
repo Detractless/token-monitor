@@ -13,8 +13,9 @@ extension TokenMonitorSharedPayload.Snapshot {
             order: limitProviderOrder,
             hidden: hiddenLimitProviders
         )
+        let sourceDate = stats.sourceUpdatedAt(now: now)
         return TokenMonitorSharedPayload.Snapshot(
-            updatedAt: stats.sourceUpdatedAt(now: now) ?? .distantPast,
+            updatedAt: sourceDate ?? .distantPast,
             today: usage(from: stats.period(.today)),
             month: usage(from: stats.period(.month)),
             allTime: usage(from: stats.period(.allTime)),
@@ -29,6 +30,7 @@ extension TokenMonitorSharedPayload.Snapshot {
                     cost: day.cost ?? .nan
                 )
             },
+            todayDate: sourceDate.map { WidgetActivityModel.dayKey(for: $0) },
             sourceStale: stats.allSourcesStale,
             agents: agents(from: stats, now: now),
             recent: recent(from: stats)

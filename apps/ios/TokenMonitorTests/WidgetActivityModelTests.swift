@@ -255,3 +255,21 @@ extension WidgetActivityModelTests {
         #expect(large.columns.last?.cells[5].level == 2)
     }
 }
+
+
+extension WidgetActivityModelTests {
+    @Test func cachedReportNeverMovesIntoTheNextCalendarDay() throws {
+        let before = try #require(WidgetActivityModel.localDay(for: "2026-10-21"))
+        let after = try #require(WidgetActivityModel.localDay(for: "2026-10-22"))
+        let usage = TokenMonitorSharedPayload.Usage(tokens: 100, cost: 1, cacheReadTokens: 0, outputTokens: 0, tools: [], models: [])
+        // Older caches have no todayDate: their original timestamp remains the fallback.
+        let snapshot = TokenMonitorSharedPayload.Snapshot(updatedAt: before, today: usage, month: usage,
+            allTime: usage, limits: [], activity: [.init(date: "2026-10-21", tokens: 100, cost: 1)])
+        let entry = TokenMonitorWidgetEntry(date: after, snapshot: snapshot, preferences: .default,
+            content: "activity", period: "today", providerID: nil, showsCost: false, showsUpdateTime: true, ink: .recommended)
+        #expect(entry.days.count == 1)
+        #expect(WidgetActivityModel.today(entry.days, now: after) == nil)
+        #expect(WidgetActivityModel.last7Total(entry.days, now: after) == 100)
+        #expect(WidgetActivityModel.streak(entry.days, now: after) == 1)
+    }
+}

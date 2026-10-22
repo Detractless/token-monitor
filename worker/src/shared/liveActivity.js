@@ -3,7 +3,7 @@
 
 'use strict';
 
-// Live Activity content state v3: the Hub push builder emits data only — usage,
+// Live Activity content state v4: the Hub push builder emits data only — usage,
 // quota and running agents — and the iOS widget extension owns every
 // presentation choice (layout, currency, language), reading it from the app
 // group. Nothing presentational crosses the wire, so a new layout option never
@@ -13,13 +13,15 @@
 const { creditsMeterPercent } = require('./limits/balanceDisplay');
 const { LIMIT_PROVIDER_IDS } = require('./limits/providers');
 const { limitWindowLabel } = require('./limits/windowLabels');
-const { RUNNING_WINDOW_MS, sessionActivityState } = require('./sessionLive');
+const { RUNNING_WINDOW_MS, sessionActivityState, liveActivityExpiryAt } = require('./sessionLive');
+
+// Leave room for the APNs envelope and the fixed Activity attributes.
+const MAX_CONTENT_STATE_BYTES = 3500;
 
 const DATE_REFERENCE_SECONDS = 978307200;
 const STALE_AGE_SECONDS = 15 * 60;
-// ActivityKit caps the whole push at 4 KB, so the quota list is bounded and
-// null fields are omitted: three ranked records plus whatever the device's
-// layout names explicitly.
+// Record limits bound work; fitting the serialized UTF-8 state below enforces
+// the separate ActivityKit/APNs byte limits. Explicit sources take priority.
 const RANKED_QUOTAS = 3;
 const MAX_QUOTAS = 8;
 const MAX_WINDOWS = 3;
@@ -154,20 +156,23 @@ function rankedProviders(stats, preferences) {
 // provider's lowest accounts, named accounts and the recent client's records.
 function liveActivityProviders(stats, preferences, recentClient) {
   const ranked = rankedProviders(stats, preferences);
-  const selected = ranked.slice(0, RANKED_QUOTAS);
+  // Explicit accounts cannot be displaced by automatic/provider fillers.
+  const selected = [];
   const add = (provider) => {
     if (provider && !selected.includes(provider) && selected.length < MAX_QUOTAS) selected.push(provider);
   };
-  const named = [...(preferences?.providerIDs || []), recentClient].filter(Boolean);
-  for (const id of named) {
-    ranked.filter((provider) => normalizedProvider(provider.provider) === id)
-      .slice(0, MAX_ACCOUNTS_PER_PROVIDER)
-      .forEach(add);
-  }
   for (const key of preferences?.accountKeys || []) {
     add(ranked.find((provider) => normalizedString(provider.accountKey, 128) === key));
   }
-  return selected;
+  ranked.slice(0, RANKED_QUOTAS).forEach(add);
+  const named = [...(preferences?.providerIDs || []), recentClient].filter(Boolean);
+  // Reserve one record per named provider before filling extra accounts.
+  for (const id of named) add(ranked.find((provider) => normalizedProvider(provider.provider) === id));
+  for (const id of named) {
+    ranked.filter((provider) => normalizedProvider(provider.provider) === id)
+      .slice(0, MAX_ACCOUNTS_PER_PROVIDER).forEach(add);
+  }
+  return ranked.filter((provider) => selected.includes(provider));
 }
 
 function sourceTimestamp(value, nowMs) {
@@ -254,7 +259,7 @@ function liveActivityQuota(provider, nowMs) {
     accountKey: normalizedString(provider.accountKey, 128) || null,
     planLabel: normalizedString(provider.planLabel) || normalizedString(provider.accountLabel) || null,
     updatedAt: appleSeconds(sourceTimestamp(provider.updatedAt, nowMs)),
-    stale: provider.stale === true || null,
+    stale: provider.stale === true || providerStatus(provider) !== 'ok' || null,
     windows: canonicalWindows(provider).slice(0, MAX_WINDOWS)
       .map((window) => quotaWindow(provider, providerID, window))
   });
@@ -335,16 +340,63 @@ function liveAgents(stats, nowMs) {
 // When the running count next changes on its own. A session that goes quiet
 // writes nothing, so no ingest would trigger the push that clears it.
 function liveActivityRefreshAt(stats, nowMs = Date.now()) {
-  const expiries = runningSessions(stats, nowMs)
-    .map((session) => session.lastMs + RUNNING_WINDOW_MS + 1)
-    .filter((expiry) => expiry > nowMs);
+  const expiries = sessionEntries(stats).flatMap((session) => {
+    // Shared with the desktop: a provider observation can override a recent
+    // transcript as running, waiting or idle, then fall back when its lease ends.
+    const lease = liveActivityExpiryAt(session, nowMs);
+    const last = timestampMs(session?.lastUsedAt);
+    const transcriptExpiry = last === null ? 0 : last + RUNNING_WINDOW_MS + 1;
+    return [lease, transcriptExpiry].filter((expiry) => expiry > nowMs);
+  });
   return expiries.length ? Math.min(...expiries) : null;
+}
+
+function fitLiveActivityContentState(state, preferences = {}) {
+  const size = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
+  if (size(state) <= MAX_CONTENT_STATE_BYTES) return state;
+  const quotas = state.quotas || [];
+  const result = { ...state, quotas: [] };
+  const accounts = new Set(preferences.accountKeys || []);
+  const providers = new Set(preferences.providerIDs || []);
+  const priority = (quota) => accounts.has(quota.accountKey) ? 0 : providers.has(quota.providerID) ? 1 : 2;
+  const ordered = quotas.map((quota, index) => ({ quota, index }))
+    .sort((left, right) => priority(left.quota) - priority(right.quota) || left.index - right.index);
+  const admitted = new Map();
+  for (const { quota, index } of ordered) {
+    const variants = [quota, { ...quota, planLabel: undefined }];
+    for (const candidate of variants) {
+      const next = [...admitted.entries(), [index, candidate]]
+        .sort((left, right) => left[0] - right[0]).map((entry) => entry[1]);
+      if (size({ ...result, quotas: next }) <= MAX_CONTENT_STATE_BYTES) {
+        admitted.set(index, candidate);
+        break;
+      }
+    }
+  }
+  result.quotas = [...admitted.entries()].sort((left, right) => left[0] - right[0]).map((entry) => entry[1]);
+  if (size(result) > MAX_CONTENT_STATE_BYTES) {
+    throw new RangeError('Live Activity base state exceeds its byte budget');
+  }
+  return result;
+}
+
+function liveActivityPushBody(contentState, timestamp) {
+  const state = fitLiveActivityContentState(contentState);
+  const body = JSON.stringify({ aps: {
+    timestamp, event: 'update',
+    'stale-date': liveActivityStaleDate(state, timestamp),
+    'content-state': state
+  } });
+  if (new TextEncoder().encode(body).length > 4096) {
+    throw new RangeError('Live Activity push exceeds the APNs byte budget');
+  }
+  return body;
 }
 
 function buildLiveActivityContentState(stats, registration, nowMs = Date.now()) {
   const preferences = registration?.preferences || {};
   const recent = liveRecent(stats);
-  return compact({
+  return fitLiveActivityContentState(compact({
     ...activitySource(stats, nowMs),
     usage: {
       today: periodUsage(stats?.periods?.today),
@@ -354,10 +406,13 @@ function buildLiveActivityContentState(stats, registration, nowMs = Date.now()) 
     quotas: liveActivityProviders(stats, preferences, recent?.client)
       .map((provider) => liveActivityQuota(provider, nowMs)),
     agents: liveAgents(stats, nowMs)
-  });
+  }), preferences);
 }
 
 module.exports = {
+  MAX_CONTENT_STATE_BYTES,
+  fitLiveActivityContentState,
+  liveActivityPushBody,
   liveActivityRefreshAt,
   liveActivityStaleDate,
   buildLiveActivityContentState,

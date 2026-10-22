@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const http2 = require('node:http2');
-const { liveActivityStaleDate } = require('../shared/liveActivity');
+const { liveActivityPushBody } = require('../shared/liveActivity');
 
 const DEFAULT_BUNDLE_ID = 'com.javis.tokenmonitor.ios';
 const DEFAULT_MIN_INTERVAL_MS = 15_000;
@@ -162,14 +162,7 @@ function createLiveActivityPushClient({
         'apns-priority': '10',
         'apns-expiration': '0'
       },
-      body: JSON.stringify({
-        aps: {
-          timestamp,
-          event: 'update',
-          'stale-date': liveActivityStaleDate(contentState, timestamp),
-          'content-state': contentState
-        }
-      })
+      body: liveActivityPushBody(contentState, timestamp)
     });
     let body = null;
     try { body = await response.json(); } catch (_) { /* APNs may return an empty body. */ }

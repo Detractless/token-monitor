@@ -247,7 +247,7 @@ for (const [runtime, api] of [
     );
     assert.deepEqual(
       named.quotas.map((quota) => `${quota.providerID}:${quota.accountKey || ''}`),
-      ['claude:', 'kiro:', 'codex:b', 'cursor:', 'codex:a', 'zai:z']
+      ['claude:', 'kiro:', 'codex:b', 'codex:a', 'cursor:', 'zai:z']
     );
   });
 
@@ -384,5 +384,56 @@ for (const [runtime, api] of [
     assert.deepEqual(state.agents, { running: 3, clients: ['claude', 'codex'] });
     assert.equal(api.liveActivityRefreshAt(stats, now), now - 4 * 60_000 + 10 * 60_000 + 1);
     assert.equal(api.liveActivityRefreshAt({ periods: {} }, now), null);
+  });
+}
+
+
+for (const [runtime, api] of [
+  ['Node', require('../../src/shared/liveActivity')],
+  ['Worker', require('../../worker/src/shared/liveActivity')]
+]) {
+  test(`${runtime} bounded pushes preserve explicitly selected accounts before fillers`, () => {
+    const now = Date.now();
+    const providers = [
+      ...['claude', 'codex', 'cursor'].map((provider, index) => ({ provider, accountKey: `ranked-${index}`, windows: [{ remainingPercent: index }] })),
+      ...['kiro', 'zai'].flatMap((provider) => [0, 1, 2, 3].map((index) => ({ provider, accountKey: `${provider}-${index}`, windows: [{ remainingPercent: 50 + index }] })))
+    ];
+    const state = api.buildLiveActivityContentState({ limits: { providers } },
+      { preferences: { providerIDs: ['kiro', 'zai'], accountKeys: ['kiro-3'] } }, now);
+    assert(state.quotas.some((quota) => quota.accountKey === 'kiro-3'));
+    assert(state.quotas.some((quota) => quota.providerID === 'zai'));
+    assert(state.quotas.length <= 8);
+  });
+
+  test(`${runtime} Unicode multi-account states and the full APNs body stay inside their byte budgets`, () => {
+    const now = Date.now();
+    const ids = ['claude', 'codex', 'cursor', 'kiro', 'zai', 'alibaba', 'commandcode', 'volcengine'];
+    const providers = ids.map((provider, index) => ({
+      provider, status: 'ok', updatedAt: new Date(now).toISOString(),
+      accountKey: 'x'.repeat(63) + index, planLabel: '方案'.repeat(35),
+      windows: ['session', 'weekly', 'billing'].map((kind) => ({ kind,
+        remainingPercent: index + 50, resetsAt: '2026-11-01T00:00:00Z', windowMinutes: 10080 }))
+    }));
+    const state = api.buildLiveActivityContentState({ updatedAt: new Date(now).toISOString(), limits: { providers } },
+      { preferences: { providerIDs: ids, accountKeys: [providers.at(-1).accountKey] } }, now);
+    assert(state.quotas.some((quota) => quota.accountKey === providers.at(-1).accountKey));
+    assert(Buffer.byteLength(JSON.stringify(state)) <= api.MAX_CONTENT_STATE_BYTES);
+    const body = api.liveActivityPushBody(state, Math.floor(now / 1000));
+    assert(Buffer.byteLength(body) <= 4096);
+    assert.deepEqual(JSON.parse(body).aps['content-state'], state);
+  });
+
+  test(`${runtime} provider lease expiry schedules both running and non-running fallback transitions`, () => {
+    const now = Date.now();
+    for (const state of ['running', 'waiting', 'idle']) {
+      const lastUsedAt = new Date(now - (state === 'running' ? 20 * 60_000 : 1000)).toISOString();
+      const stats = { periods: { today: { sessions: { one: { client: 'claude', lastUsedAt,
+        liveActivity: { state, observedAt: new Date(now).toISOString() } } } } } };
+      const before = api.buildLiveActivityContentState(stats, {}, now).agents.running;
+      const after = api.buildLiveActivityContentState(stats, {}, now + 30_000).agents.running;
+      assert.equal(before, state === 'running' ? 1 : 0);
+      assert.equal(after, state === 'running' ? 0 : 1);
+      assert.equal(api.liveActivityRefreshAt(stats, now), now + 30_000);
+    }
   });
 }

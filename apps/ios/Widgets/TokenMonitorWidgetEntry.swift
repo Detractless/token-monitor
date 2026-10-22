@@ -51,7 +51,10 @@ struct TokenMonitorWidgetEntry: TimelineEntry {
         guard let today = snapshot?.today,
               today.tokens.isFinite, today.tokens >= 0,
               today.tokensKnown != false else { return days }
-        let key = WidgetActivityModel.dayKey(for: date)
+        guard let snapshot, snapshot.updatedAt > .distantPast else { return days }
+        let key = snapshot.todayDate ?? WidgetActivityModel.dayKey(for: snapshot.updatedAt)
+        guard WidgetActivityModel.localDay(for: key) != nil,
+              key <= WidgetActivityModel.dayKey(for: date) else { return days }
         let cost = today.cost.isFinite
             ? today.cost
             : (days.first { $0.date == key }?.cost ?? 0)

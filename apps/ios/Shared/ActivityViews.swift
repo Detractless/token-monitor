@@ -119,6 +119,11 @@ struct ActivityContext {
         if let key = source.accountKey {
             candidates = candidates.filter { $0.accountKey == key }
         }
+        // A stale low balance must not outrank a healthy reading. Named
+        // stale accounts remain selectable and are labelled at their source.
+        candidates = candidates.filter { Self.window(in: $0, source.window) != nil }
+        let healthy = candidates.filter { !quotaIsStale($0) }
+        if !healthy.isEmpty { candidates = healthy }
         var best: (reading: Reading, remaining: Double)?
         for quota in candidates {
             guard let window = Self.window(in: quota, source.window) else { continue }
@@ -128,6 +133,16 @@ struct ActivityContext {
             }
         }
         return best?.reading
+    }
+
+    func quotaIsStale(_ quota: ActivityState.Quota) -> Bool {
+        guard quota.stale != true, let updatedAt = quota.updatedAt,
+              updatedAt <= now else { return true }
+        return now.timeIntervalSince(updatedAt) >= 900
+    }
+
+    func sourceIsStale(_ source: ActivitySource?) -> Bool {
+        isStale || source.flatMap { reading($0) }.map { quotaIsStale($0.quota) } == true
     }
 
     /// The selected window first, then the record's other windows.
@@ -477,9 +492,14 @@ struct ActivityCaption: View {
 /// The stale chip, or a self-updating "1 minute ago".
 struct ActivityFreshness: View {
     let context: ActivityContext
+    var source: ActivitySource? = nil
+
+    private var dataDate: Date {
+        source.flatMap { context.reading($0)?.quota.updatedAt } ?? context.state.updatedAt
+    }
 
     var body: some View {
-        if context.isStale {
+        if context.sourceIsStale(source) {
             Text("Stale")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -487,9 +507,9 @@ struct ActivityFreshness: View {
                 .padding(.vertical, 1.5)
                 .background(Color.secondary.opacity(0.18), in: Capsule())
                 .fixedSize()
-        } else if context.state.updatedAt > .distantPast {
+        } else if dataDate > .distantPast {
             Text(.currentDate, format: .reference(
-                to: context.state.updatedAt, allowedFields: [.minute, .hour, .day], maxFieldCount: 1
+                to: dataDate, allowedFields: [.minute, .hour, .day], maxFieldCount: 1
             ).locale(context.locale))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -529,7 +549,8 @@ struct ActivityCompactItemView: View {
             .font(.system(size: 14, weight: .semibold).monospacedDigit())
             .lineLimit(1)
             .minimumScaleFactor(0.8)
-            .opacity(context.isStale ? 0.5 : 1)
+            .opacity(context.sourceIsStale([.tokens, .cost, .speed, .agents, .none, .appIcon].contains(slot.style)
+                ? nil : slot.source) ? 0.5 : 1)
     }
 
     @ViewBuilder
@@ -641,7 +662,7 @@ struct ActivityMinimalView: View {
                 ActivityMark(providerID: context.providerID(for: source) ?? reading?.quota.providerID, size: 16)
             }
         }
-        .opacity(context.isStale ? 0.5 : 1)
+        .opacity(context.sourceIsStale(source) ? 0.5 : 1)
         .accessibilityLabel(Text("AI limit"))
         .accessibilityValue(context.valueText(reading?.window, source.value))
     }
@@ -682,8 +703,8 @@ struct ActivityExpandedTrailing: View {
         Group {
             switch context.layout.expanded {
             case .quota:
-                if context.isStale {
-                    ActivityFreshness(context: context)
+                if context.sourceIsStale(context.layout.expandedSource) {
+                    ActivityFreshness(context: context, source: context.layout.expandedSource)
                 } else if let plan = context.reading(context.layout.expandedSource)?.quota.planLabel, !plan.isEmpty {
                     Text(verbatim: plan)
                         .font(.caption)
@@ -714,6 +735,7 @@ struct ActivityExpandedBottom: View {
             switch context.layout.expanded {
             case .quota:
                 ActivityWindowColumns(context: context, reading: context.reading(source))
+                    .opacity(context.sourceIsStale(source) ? 0.5 : 1)
             case .usage:
                 usage(source)
             case .providers:
@@ -788,6 +810,7 @@ struct ActivityProviderList: View {
                             Spacer(minLength: 0).frame(maxWidth: .infinity)
                         }
                     }
+                    .opacity(context.isStale || context.quotaIsStale(quota) ? 0.5 : 1)
                     .accessibilityElement(children: .combine)
                 }
             }
@@ -900,9 +923,10 @@ struct ActivityLockScreenView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 6)
-                ActivityFreshness(context: context)
+                ActivityFreshness(context: context, source: context.layout.lockScreenSource)
             }
             ActivityWindowColumns(context: context, reading: reading)
+                .opacity(context.sourceIsStale(context.layout.lockScreenSource) ? 0.5 : 1)
         }
     }
 }

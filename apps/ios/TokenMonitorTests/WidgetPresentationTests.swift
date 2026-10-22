@@ -78,3 +78,16 @@ struct WidgetPresentationTests {
     }
 
 }
+
+
+extension WidgetPresentationTests {
+    @Test func creditsHeadlineUsesBalanceWhileKeepingTheDerivedMeter() {
+        let window = TokenMonitorSharedPayload.LimitWindow(id: "billing", label: "Credits", remainingPercent: 20,
+            amount: 20, currency: "USD", resetAt: nil)
+        let column = WidgetWindowColumn(window: window, providerID: "cursor", now: .now, locale: Locale(identifier: "en_US"))
+        #expect(column.valueText == "$20.00")
+        #expect(column.shortValueText == "$20.00")
+        #expect(!column.isPercent)
+        #expect(column.fraction == 0.2)
+    }
+}

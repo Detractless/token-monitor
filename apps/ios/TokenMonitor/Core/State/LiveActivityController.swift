@@ -61,7 +61,7 @@ final class LiveActivityController {
     ) async {
         latestPreferences = preferences
         if enabled {
-            guard let snapshot else {
+            guard canPublish, let snapshot else {
                 errorMessage = String(localized: "Connect to a Hub before starting Live Activity.")
                 return
             }
@@ -75,7 +75,7 @@ final class LiveActivityController {
         snapshot: TokenMonitorSharedPayload.Snapshot,
         preferences: TokenMonitorSharedPayload.Preferences
     ) async {
-        guard preferences.liveActivityEnabled else {
+        guard preferences.liveActivityEnabled, canPublish else {
             return
         }
         let generation = generation
@@ -143,6 +143,14 @@ final class LiveActivityController {
             errorMessage = error.localizedDescription
             isActive = false
         }
+    }
+
+    private var canPublish: Bool {
+        #if DEBUG
+        // Explicit developer fixture only; no normal Settings path can opt in.
+        if ProcessInfo.processInfo.arguments.contains("--sample-live-activity") { return true }
+        #endif
+        return configuration != nil
     }
 
     private func endAll() async {
@@ -268,7 +276,7 @@ final class LiveActivityController {
                     accountKey: limit.accountKey,
                     planLabel: limit.planLabel,
                     updatedAt: limit.updatedAt,
-                    stale: limit.sourceStale,
+                    stale: limit.sourceStale == true || (limit.status ?? "ok") != "ok",
                     windows: limit.windows.prefix(3).map { window in
                         .init(
                             label: window.label,
@@ -283,7 +291,8 @@ final class LiveActivityController {
                 )
             },
             agents: snapshot.agents ?? .none
-        )
+        ).fittingBudget(providerIDs: preferences.liveLayout.referencedProviderIDs,
+                        accountKeys: preferences.liveLayout.referencedAccountKeys)
     }
 
     /// Ranking shared with the Hub: healthy (`ok`, non-stale) providers first,
@@ -323,17 +332,16 @@ final class LiveActivityController {
         recentClient: String?
     ) -> [TokenMonitorSharedPayload.Limit] {
         let ranked = rankedLimits(limits)
-        var selected = Array(ranked.prefix(3))
+        var selected: [TokenMonitorSharedPayload.Limit] = []
         func add(_ limit: TokenMonitorSharedPayload.Limit?) {
             guard let limit, selected.count < 8, !selected.contains(where: { $0.id == limit.id }) else { return }
             selected.append(limit)
         }
-        for id in providerIDs + [recentClient].compactMap(\.self) {
-            ranked.filter { $0.providerID == id }.prefix(3).forEach(add)
-        }
-        for key in accountKeys {
-            add(ranked.first { $0.accountKey == key })
-        }
-        return selected
+        for key in accountKeys { add(ranked.first { $0.accountKey == key }) }
+        ranked.prefix(3).forEach(add)
+        let named = providerIDs + [recentClient].compactMap(\.self)
+        for id in named { add(ranked.first { $0.providerID == id }) }
+        for id in named { ranked.filter { $0.providerID == id }.prefix(3).forEach(add) }
+        return ranked.filter { limit in selected.contains { $0.id == limit.id } }
     }
 }

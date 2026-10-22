@@ -52,6 +52,16 @@ nonisolated enum MetricFormatter {
         return known > 0 ? "\(usageCostFromUSD(known, currency: currency)) + ?" : "—"
     }
 
+    /// History uses the same explicit missing-price rule as live breakdowns.
+    /// A zero known subtotal with unpriced usage cannot be presented as free.
+    static func historyCostFromUSD(_ value: Double, unpricedTokens: Double?, currency: AppCurrency) -> String {
+        guard value.isFinite else { return "—" }
+        guard let unpricedTokens, unpricedTokens.isFinite, unpricedTokens > 0 else {
+            return currencyFromUSD(value, currency: currency)
+        }
+        return value > 0 ? "\(currencyFromUSD(value, currency: currency)) + ?" : "—"
+    }
+
     static func currency(
         _ value: Double,
         sourceCode: String,

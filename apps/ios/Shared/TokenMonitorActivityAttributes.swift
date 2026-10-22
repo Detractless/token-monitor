@@ -19,6 +19,45 @@ nonisolated struct TokenMonitorActivityAttributes: ActivityAttributes {
         var quotas: [Quota]
         var agents: Agents
 
+        /// UTF-8 encoded bytes, leaving room for the fixed attributes/APNs envelope.
+        static let byteBudget = 3500
+
+        func fittingBudget(providerIDs: [String], accountKeys: [String]) -> Self {
+            func fits(_ state: Self) -> Bool {
+                guard let data = try? JSONEncoder().encode(state) else { return false }
+                return data.count <= Self.byteBudget
+            }
+            if fits(self) { return self }
+            let accounts = Set(accountKeys), providers = Set(providerIDs)
+            func priority(_ quota: Quota) -> Int {
+                if let key = quota.accountKey, accounts.contains(key) { return 0 }
+                return providers.contains(quota.providerID) ? 1 : 2
+            }
+            let ordered = quotas.enumerated().sorted {
+                let left = priority($0.element), right = priority($1.element)
+                return left == right ? $0.offset < $1.offset : left < right
+            }
+            var result = self
+            result.quotas = []
+            var admitted: [Int: Quota] = [:]
+            for (index, quota) in ordered {
+                var withoutPlan = quota
+                withoutPlan.planLabel = nil
+                for candidate in [quota, withoutPlan] {
+                    var next = result
+                    var proposed = admitted
+                    proposed[index] = candidate
+                    next.quotas = proposed.keys.sorted().compactMap { proposed[$0] }
+                    if fits(next) {
+                        admitted = proposed
+                        result = next
+                        break
+                    }
+                }
+            }
+            return result
+        }
+
         struct Usage: Codable, Hashable, Sendable {
             var today: PeriodUsage
             var month: PeriodUsage

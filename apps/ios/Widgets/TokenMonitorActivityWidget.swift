@@ -48,7 +48,6 @@ struct TokenMonitorActivityWidget: Widget {
             preferences: preferences,
             isStale: context.isStale
                 || context.state.sourceStale == true
-                || context.state.quotas.first?.stale == true
         )
     }
 }

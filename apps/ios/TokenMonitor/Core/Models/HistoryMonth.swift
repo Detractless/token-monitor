@@ -5,6 +5,7 @@ nonisolated struct HistoryMonth: Decodable, Identifiable, Sendable {
     let tokens: Double?
     let cost: Double?
     let activeTimeMs: Double?
+    var unpricedTokens: Double? = nil
     var perClient: [String: ClientMessages]? = nil
 
     nonisolated struct ClientMessages: Decodable, Sendable {
@@ -22,6 +23,10 @@ nonisolated struct HistoryMonth: Decodable, Identifiable, Sendable {
     }
 
     var id: String { month ?? "unknown-month" }
+
+    var localDateValue: Date? {
+        Date.hubMonth(from: month, timeZone: .autoupdatingCurrent)
+    }
 
     var dateValue: Date? {
         Date.hubMonth(from: month)

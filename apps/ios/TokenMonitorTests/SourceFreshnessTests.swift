@@ -178,3 +178,88 @@ struct SourceFreshnessTests {
     }
     #endif
 }
+
+
+extension SourceFreshnessTests {
+    @Test func calendarKeysStayOnTheirDayAndMonthInEveryTimeZone() throws {
+        for id in ["America/Los_Angeles", "Pacific/Honolulu", "Asia/Hong_Kong", "Pacific/Kiritimati"] {
+            let zone = try #require(TimeZone(identifier: id))
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = zone
+            for key in ["2026-01", "2026-10"] {
+                let date = try #require(Date.hubMonth(from: key, timeZone: zone))
+                #expect(calendar.component(.year, from: date) == 2026)
+                #expect(calendar.component(.month, from: date) == Int(key.suffix(2)))
+            }
+            let date = try #require(Date.hubDay(from: "2026-10-01", timeZone: zone))
+            #expect(calendar.component(.day, from: date) == 1)
+            #expect(calendar.component(.month, from: date) == 10)
+        }
+    }
+
+    @Test func historyCostsRetainMissingPricesAndLegacyZeroRemainsFree() throws {
+        let history = try JSONDecoder().decode(UsageHistory.self, from: Data(#"{"daily":[{"date":"2026-10-22","tokens":100,"cost":0,"unpricedTokens":100}],"monthly":[{"month":"2026-10","cost":2,"unpricedTokens":100}],"summary":{"totalCost":0,"unpricedTokens":100}}"#.utf8))
+        let day = try #require(history.daily?.first)
+        #expect(day.unpricedTokens == 100)
+        #expect(history.monthly?.first?.unpricedTokens == 100)
+        #expect(history.summary?.unpricedTokens == 100)
+        #expect(MetricFormatter.historyCostFromUSD(0, unpricedTokens: day.unpricedTokens, currency: .usd) == "—")
+        #expect(MetricFormatter.historyCostFromUSD(2, unpricedTokens: 100, currency: .usd) == "$2.00 + ?")
+        #expect(MetricFormatter.historyCostFromUSD(0, unpricedTokens: nil, currency: .usd) == "$0.00")
+        let week = try #require(UsageHistory.weeklyBuckets([day], timeZone: .gmt).first)
+        #expect(week.unpricedTokens == 100)
+        #expect(MetricFormatter.historyCostFromUSD(week.cost ?? 0, unpricedTokens: week.unpricedTokens, currency: .usd) == "—")
+    }
+
+    @Test func liveReadingUsesHealthyQuotaAndMarksExplicitStaleOrExpiredSources() {
+        typealias State = TokenMonitorActivityAttributes.ContentState
+        let now = Date.now
+        func quota(_ id: String, _ percent: Double, stale: Bool = false, date: Date? = nil) -> State.Quota {
+            .init(providerID: id, updatedAt: date ?? now, stale: stale,
+                  windows: [.init(label: "Weekly", kind: "weekly", remainingPercent: percent)])
+        }
+        let state = State(updatedAt: now, usage: .init(today: .init(), month: .init()),
+            quotas: [quota("codex", 40), quota("cursor", 5, stale: true),
+                     quota("claude", 1, date: now.addingTimeInterval(-901))], agents: .none)
+        let context = ActivityContext(state: state, layout: .init(), isStale: false, now: now)
+        #expect(context.reading(.init())?.quota.providerID == "codex")
+        let healthyStale = context.sourceIsStale(.init())
+        let flaggedStale = context.sourceIsStale(.init(providerID: "cursor"))
+        let expiredStale = context.sourceIsStale(.init(providerID: "claude"))
+        #expect(healthyStale == false)
+        #expect(flaggedStale)
+        #expect(expiredStale)
+    }
+
+    @Test func explicitAccountsSurviveFillersAndLocalContentFitsActivityByteBudget() throws {
+        let now = Date.now
+        let providers = ["claude", "codex", "cursor", "kiro", "zai", "alibaba", "commandcode", "volcengine"]
+        let limits = providers.enumerated().map { index, id in
+            TokenMonitorSharedPayload.Limit(id: id, providerID: id, planLabel: String(repeating: "方案", count: 35), status: "ok", updatedAt: now,
+                windows: ["session", "weekly", "billing"].map { kind in
+                    .init(id: kind, label: kind, remainingPercent: Double(index + 50), amount: nil, currency: nil,
+                          resetAt: now.addingTimeInterval(50000), windowMinutes: 10080, kind: kind)
+                }, accountKey: String(repeating: "x", count: 63) + String(index))
+        }
+        let snapshot = TokenMonitorSharedPayload.Snapshot(updatedAt: now, today: .empty, month: .empty,
+            allTime: .empty, limits: limits, activity: [])
+        var preferences = TokenMonitorSharedPayload.Preferences.default
+        preferences.liveLayout.compactLeading.source = .init(providerID: "volcengine", accountKey: limits.last?.accountKey)
+        let state = LiveActivityController.contentState(snapshot: snapshot, preferences: preferences, now: now)
+        #expect(state.quotas.contains { $0.accountKey == limits.last?.accountKey })
+        #expect(try JSONEncoder().encode(state).count <= TokenMonitorActivityAttributes.ContentState.byteBudget)
+        let selected = LiveActivityController.selectedLimits(limits, providerIDs: ["kiro", "zai"],
+            accountKeys: [limits.last!.accountKey!], recentClient: "codex")
+        #expect(selected.contains { $0.id == "volcengine" })
+        var crowded = Array(limits.prefix(3))
+        for provider in ["kiro", "zai"] {
+            for index in 0..<4 {
+                crowded.append(.init(id: "\(provider)-\(index)", providerID: provider, planLabel: nil,
+                    status: "ok", updatedAt: now, windows: limits[3].windows, accountKey: "\(provider)-\(index)"))
+            }
+        }
+        let explicit = LiveActivityController.selectedLimits(crowded, providerIDs: ["kiro", "zai"],
+            accountKeys: ["kiro-3"], recentClient: nil)
+        #expect(explicit.contains { $0.accountKey == "kiro-3" })
+    }
+}

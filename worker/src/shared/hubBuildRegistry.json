@@ -369,6 +369,10 @@
       {
         "revision": 92,
         "buildId": "sha256:4885d37e13db45e5c33e70d00baca63ff6728b4023f6764434e0910ad521d955"
+      },
+      {
+        "revision": 93,
+        "buildId": "sha256:2711bbf4bb125432c597ac5fb9c0263b4036c6ed2f004c36e18e41afccac0da3"
       }
     ],
     "node-hub": [
@@ -407,6 +411,10 @@
       {
         "revision": 9,
         "buildId": "sha256:352470d3c490f1c5d5f6dc35aa8ae410ede5816dca5efbb42297b87949ee20bf"
+      },
+      {
+        "revision": 10,
+        "buildId": "sha256:946ff283a25e1bed9fb142558e16e67ee7cc0cd346e288791ad8898ad7bd8692"
       }
     ],
     "cloudflare-worker": [
@@ -441,6 +449,10 @@
       {
         "revision": 8,
         "buildId": "sha256:949f34f8195f31ca1f2eee7502e8f44e6ec5697faffef60778b912ce8c645d25"
+      },
+      {
+        "revision": 9,
+        "buildId": "sha256:d37a17613a75ad2ecd77fb89bead0e0e8649f815502e3561ceb3e292f28ee467"
       }
     ]
   }
