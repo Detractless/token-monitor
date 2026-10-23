@@ -17,7 +17,15 @@ test('packaged assets survive installation and hashes cover bytes; undeclared/es
   const pkg = packageDirectory(dir); const dest = path.join(dir,'installed'); unpackPackage(pkg,dest); assert.equal(packageDirectory(dest).hash,pkg.hash);
   const raw = JSON.parse(pkg.bytes); raw.assets['ui/page.js'] = Buffer.from('console.log(2)').toString('base64'); assert.notEqual(parsePackage(JSON.stringify(raw)).hash,pkg.hash);
   raw.assets['secret.js']=''; assert.throws(() => parsePackage(JSON.stringify(raw)),/mismatch/);
-  fs.unlinkSync(path.join(dir,'ui/page.js')); fs.symlinkSync('/etc/hosts',path.join(dir,'ui/page.js')); assert.throws(() => packageDirectory(dir),/escapes/);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-web-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  const target = path.join(outside, 'page.js');
+  fs.writeFileSync(target, 'console.log(3)');
+  const link = path.join(dir, 'ui/page.js');
+  fs.unlinkSync(link);
+  fs.symlinkSync(target, link, 'file');
+  assert.equal(fs.readFileSync(link, 'utf8'), 'console.log(3)', 'the escape fixture must resolve on every platform');
+  assert.throws(() => packageDirectory(dir), /escapes/);
 });
 test('page bridge drops internal identities, credentials and unknown fields', () => {
   const value = pageSnapshot({ target:'device', period:'today', token:'secret', rows:[{label:'Laptop',tokens:5,costUsd:1,deviceId:'secret',credentials:{key:'secret'}}] });
