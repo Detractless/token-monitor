@@ -10,6 +10,9 @@ const path = require('node:path');
 const { createDataBus } = require('../../shared/plugins/dataBus');
 const { registerSystemSources } = require('./systemDetails');
 const { createAppSources } = require('./appSources');
+const { createBusinessDataService } = require('./businessData');
+const { createPluginCapabilities } = require('./capabilities');
+const { createPluginSettingsStore } = require('./settings');
 const { createPluginSandbox, registerPluginScheme } = require('./sandbox');
 const { createWebUi, registerWebUiScheme } = require('./webUi');
 const { createPluginPages } = require('./pages');
@@ -39,6 +42,7 @@ function createPluginRuntime({
   persistManagementSettings,
   getLocale,
   getContext,
+  businessAdapters = {},
   isMainSender,
   isSurfaceSender = () => false,
   surfaceContext = () => null,
@@ -49,10 +53,28 @@ function createPluginRuntime({
   env = process.env
 }) {
   const { app, BrowserWindow, Notification, ipcMain, session, shell, dialog } = electron;
+  let disposed = false, started = false;
+  const ipcHandlers = new Set(), ipcListeners = [], observerCleanup = [];
+  const handle = (channel, fn) => {
+    ipcMain.handle(channel, (...args) => {
+      if (disposed) throw new Error('plugin runtime disposed');
+      return fn(...args);
+    });
+    ipcHandlers.add(channel);
+  };
+  const on = (channel, fn) => {
+    const listener = (...args) => { if (!disposed) fn(...args); };
+    ipcMain.on(channel, listener); ipcListeners.push([channel, listener]);
+  };
   const safeMode = safeModeRequested(process.argv, env);
   const bus = createDataBus({ onError: (error) => log(`[plugins] source failed: ${error.message}`) });
   registerSystemSources(bus, { powerMonitor: electron.powerMonitor });
   const appSources = createAppSources({ bus, tokenRateApi, presentation, getContext });
+  const businessData = createBusinessDataService(businessAdapters);
+  let businessStatsSnapshot = null;
+  let businessSource = businessAdapters.sourceId?.() || 'local';
+  const capabilities = createPluginCapabilities({ businessData });
+  const authorSettings = createPluginSettingsStore({ directory: path.join(userDataDir, 'plugin-settings') });
   const userDir = path.join(userDataDir, 'plugins');
 
   // Requests leave from a cookie-less in-memory session through the same
@@ -87,6 +109,8 @@ function createPluginRuntime({
     sandbox,
     notify,
     netFetch,
+    capabilities,
+    authorSettings,
     getSettings,
     saveStates: persistPluginStates,
     getLocale,
@@ -95,14 +119,49 @@ function createPluginRuntime({
     log
   });
 
-  const webUi = electron.WebContentsView ? createWebUi({ electron, manager, bus, isMainSender, surfaceContext, surfacePlaced: (ref, surface) => placementsFor(getSettings(), ref)[surface], file: path.join(userDataDir, 'plugin-page-designs.json') }) : null;
+  let pages = null;
+  const documentCapabilities = {
+    call(item, op, args) {
+      return capabilities.call(item.owner, op, args, {
+        auth: () => {
+          try { return { ...manager.webDataAuth(item.ref), revision: item.revision, active: !item.dead && !item.parked && !item.resuming && !item.awaitingResume }; }
+          catch { return { pluginId: item.pluginId, active: false, permissions: [] }; }
+        },
+        settings: manager.webAuthorSettings(item.ref),
+        send: event => { if (!item.view.webContents.isDestroyed()) item.view.webContents.send('plugins:web:business', event); }
+      });
+    },
+    release: owner => capabilities.release(owner)
+  };
+  function presentationContext(event, surface, ref) {
+    const detached = pages?.presentationContext(event, surface, ref);
+    if (detached) return detached;
+    if (!mainSender(event)) return null;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return null;
+    const visible = win.isVisible() && !win.isMinimized();
+    if (ref === null) return ['home', 'page', 'settings'].includes(surface) ? { visible } : null;
+    const plugin = manager.list().plugins.find(p => p.status === 'active'
+      && (surface === 'settings' ? p.id === ref : p.views?.some(view => view.ref === ref && view.surfaces.includes(surface))));
+    if (!plugin) return null;
+    if (surface === 'settings') return plugin.webDocuments?.some(doc => doc.target === 'settings') ? { visible } : null;
+    if (!['home', 'page'].includes(surface) || !placementsFor(getSettings(), ref)[surface]) return null;
+    // Placement is authority; foreground demand is visibility. Empty demand
+    // must park a reusable document, not revoke its still-valid owner.
+    return { visible: visible && subscribers.get(event.sender.id)?.demands.get(surface)?.includes(ref) === true };
+  }
+
+  const webUi = electron.WebContentsView ? createWebUi({ electron, manager, bus, isMainSender, surfaceContext,
+    presentationContext, documentCapabilities,
+    surfacePlaced: (ref, surface) => placementsFor(getSettings(), ref)[surface],
+    file: path.join(userDataDir, 'plugin-page-designs.json') }) : null;
   const managed = createManagedPlugins({ root: path.join(userDataDir, 'plugin-manager'), userDir,
-    dataDir: path.join(userDataDir, 'plugin-data'), manager, getSettings, saveSettings: persistManagementSettings, getLocale });
+    dataDir: path.join(userDataDir, 'plugin-data'), settingsDir: path.join(userDataDir, 'plugin-settings'), manager, getSettings, saveSettings: persistManagementSettings, getLocale });
   managed.recover();
   const catalog = createPluginCatalog({ manager, managed, getLocale, root: path.join(userDataDir, 'plugin-catalogs'), fetchImpl: netFetch });
   const demand = createSurfaceDemand((surface, refs) => manager.setSurfaceDemand(surface, refs));
   const detachedPageOwner = Symbol('detached-pages');
-  const pages = createPluginPages({ BrowserWindow, ipcMain, manager, getSettings, getLocale,
+  pages = createPluginPages({ BrowserWindow, ipcMain, manager, getSettings, getLocale,
     onDemand: refs => demand.set(detachedPageOwner, 'page', refs) });
 
   // Each window that draws plugin views registers which refs it shows on
@@ -114,16 +173,20 @@ function createPluginRuntime({
     if (!subscriber) {
       subscriber = { webContents, demands: new Map() };
       subscribers.set(webContents.id, subscriber);
-      webContents.once('destroyed', () => {
+      const destroyed = () => {
+        webUi?.releasePresentationHost?.(webContents);
         subscribers.delete(webContents.id);
         demand.remove(webContents.id);
-      });
+      };
+      webContents.once('destroyed', destroyed);
+      observerCleanup.push(() => webContents.removeListener('destroyed', destroyed));
     }
     const allowed = new Set(manager.list().plugins.filter(plugin => plugin.status === 'active')
       .flatMap(plugin => (plugin.views || []).filter(view => view.surfaces.includes(surface)
-        && (!['page', 'notch', 'edgeDock'].includes(surface) || placementsFor(getSettings(), view.ref)[surface])).map(view => view.ref)));
+        && (!['home', 'page', 'notch', 'edgeDock'].includes(surface) || placementsFor(getSettings(), view.ref)[surface])).map(view => view.ref)));
     const selected = Array.isArray(refs) ? refs.filter(ref => typeof ref === 'string' && allowed.has(ref)).slice(0, 32) : [];
     subscriber.demands.set(surface, selected);
+    webUi?.refreshPresentations?.();
     const native = ['notch', 'edgeDock'].includes(surface);
     demand.set(webContents.id, surface, !native || nativeDemandVisible(webContents, surface) ? selected : []);
     // Opening a view is not a streaming update: resolve existing readings now.
@@ -131,6 +194,7 @@ function createPluginRuntime({
     if (!webContents.isDestroyed()) webContents.send('plugins:views', manager.payload(surface));
   }
   manager.onViews((surface, payload) => {
+    if (disposed) return;
     for (const subscriber of subscribers.values()) {
       if (!subscriber.demands.has(surface) || subscriber.webContents.isDestroyed()) continue;
       subscriber.webContents.send('plugins:views', payload);
@@ -140,6 +204,7 @@ function createPluginRuntime({
   let changedTimer = null;
   const listListeners = new Set();
   manager.onChanged(() => {
+    if (disposed) return;
     if (changedTimer) return;
     changedTimer = setTimeout(() => {
       changedTimer = null;
@@ -156,74 +221,90 @@ function createPluginRuntime({
     const settings = getSettings() || {};
     for (const plugin of list.plugins) {
       plugin.installation = managed.describe(plugin.id);
+      if (plugin.installation) plugin.settingsIdentity = `${plugin.installation.sha256}:${plugin.installation.installedAt}`;
       for (const view of plugin.views || []) view.placements = placementsFor(settings, view.ref);
     }
     return list;
   }
 
   function mainSender(event) {
-    return isMainSender(event) && (!event.senderFrame || event.senderFrame === event.sender.mainFrame);
+    return !disposed && isMainSender(event) && (!event.senderFrame || event.senderFrame === event.sender.mainFrame);
   }
 
   function requireMain(event) {
     if (!mainSender(event)) throw new Error('plugins can only be managed from the main window');
     if (!listListeners.has(event.sender)) {
       listListeners.add(event.sender);
-      event.sender.once('destroyed', () => listListeners.delete(event.sender));
+      const destroyed = () => listListeners.delete(event.sender);
+      event.sender.once('destroyed', destroyed);
+      observerCleanup.push(() => event.sender.removeListener('destroyed', destroyed));
+    }
+  }
+
+  // Electron invoke drops custom Error properties. Keep field validation and
+  // compare-and-swap conflicts structured across this host-only boundary.
+  function settingsResult(operation) {
+    try { return { ok: true, value: operation() }; }
+    catch (error) {
+      return { ok: false, error: { code: error.code || 'settings-unavailable',
+        fields: error.fields && typeof error.fields === 'object' ? error.fields : {} } };
     }
   }
 
   function registerIpc() {
-    ipcMain.handle('plugins:list', (event) => {
+    handle('plugins:list', (event) => {
       requireMain(event);
       return listWithPlacements();
     });
-    ipcMain.handle('plugins:setEnabled', (event, { id, enabled } = {}) => {
+    handle('plugins:getSettings', (event, id) => { requireMain(event); return settingsResult(() => manager.getAuthorSettings(id)); });
+    handle('plugins:updateSettings', (event, id, input) => { requireMain(event); return settingsResult(() => manager.updateAuthorSettings(id, input)); });
+    handle('plugins:setEnabled', (event, { id, enabled } = {}) => {
       requireMain(event);
       manager.setEnabled(String(id), enabled === true);
       return listWithPlacements();
     });
-    ipcMain.handle('plugins:setBackground', (event, { id, enabled } = {}) => {
+    handle('plugins:setBackground', (event, { id, enabled } = {}) => {
       requireMain(event);
       manager.setBackground(String(id), enabled === true);
       return listWithPlacements();
     });
-    ipcMain.handle('plugins:restart', (event, { id } = {}) => {
+    handle('plugins:restart', (event, { id } = {}) => {
       requireMain(event);
       manager.restart(String(id));
       return listWithPlacements();
     });
-    ipcMain.handle('plugins:reload', (event) => {
+    handle('plugins:reload', (event) => {
       requireMain(event);
       manager.reload();
       return listWithPlacements();
     });
-    ipcMain.handle('plugins:addSource', (event, input) => { requireMain(event); return catalog.addSource(input); });
-    ipcMain.handle('plugins:refreshSource', (event, id) => { requireMain(event); return catalog.refreshSource(id); });
-    ipcMain.handle('plugins:removeSource', (event, id) => { requireMain(event); return catalog.removeSource(id); });
-    ipcMain.handle('plugins:catalog', event => { requireMain(event); return catalog.list(); });
-    ipcMain.handle('plugins:catalogPreview', (event, source, id, version) => { requireMain(event); return catalog.preview(source, id, version); });
-    ipcMain.handle('plugins:import', async (event, kind) => {
+    handle('plugins:addSource', (event, input) => { requireMain(event); return catalog.addSource(input); });
+    handle('plugins:refreshSource', (event, id) => { requireMain(event); return catalog.refreshSource(id); });
+    handle('plugins:removeSource', (event, id) => { requireMain(event); return catalog.removeSource(id); });
+    handle('plugins:catalog', event => { requireMain(event); return catalog.list(); });
+    handle('plugins:catalogPreview', (event, source, id, version) => { requireMain(event); return catalog.preview(source, id, version); });
+    handle('plugins:import', async (event, kind) => {
       requireMain(event);
       const selection = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
         properties: kind === 'directory' ? ['openDirectory'] : ['openFile'],
         ...(kind === 'directory' ? {} : { filters: [{ name: 'Token Monitor plugin', extensions: ['tmplugin'] }] })
       });
+      requireMain(event);
       if (selection.canceled || !selection.filePaths.length) return null;
       return kind === 'directory' ? managed.previewDirectory(selection.filePaths[0]) : managed.previewFile(selection.filePaths[0]);
     });
-    ipcMain.handle('plugins:install', (event, token) => { requireMain(event); managed.install(token); return listWithPlacements(); });
-    ipcMain.handle('plugins:cancelInstall', (event, token) => { requireMain(event); managed.cancel(token); });
-    ipcMain.handle('plugins:rollback', (event, id) => { requireMain(event); managed.rollback(id); return listWithPlacements(); });
-    ipcMain.handle('plugins:uninstall', (event, id, options) => { requireMain(event); managed.uninstall(id, options); return listWithPlacements(); });
-    ipcMain.handle('plugins:openPage', (event, ref) => { requireMain(event); pages.open(ref); return { ok: true }; });
-    ipcMain.handle('plugins:openFolder', async (event) => {
+    handle('plugins:install', (event, token) => { requireMain(event); managed.install(token); return listWithPlacements(); });
+    handle('plugins:cancelInstall', (event, token) => { requireMain(event); managed.cancel(token); });
+    handle('plugins:rollback', (event, id) => { requireMain(event); managed.rollback(id); return listWithPlacements(); });
+    handle('plugins:uninstall', (event, id, options) => { requireMain(event); managed.uninstall(id, options); return listWithPlacements(); });
+    handle('plugins:openPage', (event, ref) => { requireMain(event); pages.open(ref); return { ok: true }; });
+    handle('plugins:openFolder', async (event) => {
       requireMain(event);
       fs.mkdirSync(userDir, { recursive: true });
       const error = await shell.openPath(userDir);
       return { ok: !error, error };
     });
-    ipcMain.handle('plugins:place', (event, { ref, surface, placed } = {}) => {
+    handle('plugins:place', (event, { ref, surface, placed } = {}) => {
       requireMain(event);
       const view = manager.list().plugins.flatMap((plugin) => plugin.views || []).find((entry) => entry.ref === ref);
       if (!view?.surfaces.includes(surface)) throw new Error('unsupported plugin placement');
@@ -231,54 +312,74 @@ function createPluginRuntime({
       applySettingsPatch(patch);
       return listWithPlacements();
     });
-    ipcMain.handle('plugins:skins', (event) => {
+    handle('plugins:skins', (event) => {
       requireMain(event);
       return manager.skins();
     });
-    ipcMain.handle('plugins:interact', (event, { surface, ref, input, revision } = {}) => {
+    handle('plugins:interact', (event, { surface, ref, input, revision } = {}) => {
       const allowed = ['home', 'page'].includes(surface) ? mainSender(event) : ['edgeDock', 'notch'].includes(surface) && isSurfaceSender(event, surface);
       if (!allowed || !subscribers.get(event.sender.id)?.demands.get(surface)?.includes(ref)) throw new Error('interaction is not from an active plugin view');
       if (surface === 'page' && !placementsFor(getSettings(), ref).page) throw new Error('plugin page placement was removed');
       return manager.interact(surface, ref, input, revision);
     });
-    ipcMain.handle('plugins:views', (event, { surface } = {}) => {
+    handle('plugins:views', (event, { surface } = {}) => {
       if (!MAIN_SURFACES.has(surface) || !mainSender(event)) return { surface, views: {} };
       return manager.payload(surface);
     });
-    ipcMain.on('plugins:demand', (event, { surface, refs } = {}) => {
+    on('plugins:demand', (event, { surface, refs } = {}) => {
       if (!MAIN_SURFACES.has(surface) || !mainSender(event)) return;
       setDemand(event.sender, surface, refs);
     });
     for (const [channel, surface] of [['edgeDock:pluginDemand', 'edgeDock'], ['topNotch:pluginDemand', 'notch']]) {
-      ipcMain.on(channel, (event, { refs } = {}) => {
+      on(channel, (event, { refs } = {}) => {
         if (isSurfaceSender(event, surface)) setDemand(event.sender, surface, refs);
       });
     }
   }
 
+  function refreshBusinessData() {
+    if (disposed) return;
+    const source = businessAdapters.sourceId?.() || 'local';
+    if (source !== businessSource) { businessSource = source; businessStatsSnapshot = null; }
+    businessData.publish(businessStatsSnapshot, { ...businessAdapters.extras?.(businessStatsSnapshot), sourceId: source });
+  }
+
   return {
     manager,
     bus,
+    refreshBusinessData,
     refreshWebSurfaces() {
+      if (disposed) return;
       webUi?.refreshSurfaces();
+      webUi?.refreshPresentations?.();
       for (const subscriber of subscribers.values()) for (const [surface, refs] of subscriber.demands) {
         if (['notch', 'edgeDock'].includes(surface)) demand.set(subscriber.webContents.id, surface, nativeDemandVisible(subscriber.webContents, surface) ? refs : []);
       }
     },
     safeMode,
     start() {
+      if (disposed) throw new Error('plugin runtime disposed');
+      if (started) return;
+      started = true;
       registerIpc();
       manager.reload();
     },
-    publishStats(stats) {
+    publishStats(stats, businessStats = stats, extras = {}) {
+      if (disposed) return;
       appSources.publish(stats);
+      businessSource = businessAdapters.sourceId?.() || 'local';
+      businessStatsSnapshot = businessStats;
+      businessData.publish(businessStats, { ...businessAdapters.extras?.(businessStats), ...extras, sourceId: businessSource });
     },
     settingsChanged() {
+      if (disposed) return;
+      refreshBusinessData();
       manager.settingsChanged();
       webUi?.refreshSurfaces();
+      webUi?.refreshPresentations?.();
       pages.refresh();
       for (const subscriber of subscribers.values()) {
-        for (const surface of ['page', 'notch', 'edgeDock']) if (subscriber.demands.has(surface)) setDemand(subscriber.webContents, surface, subscriber.demands.get(surface));
+        for (const surface of ['home', 'page', 'notch', 'edgeDock']) if (subscriber.demands.has(surface)) setDemand(subscriber.webContents, surface, subscriber.demands.get(surface));
       }
     },
     // Rendered tray items need view state synchronously with the bitmap.
@@ -286,12 +387,20 @@ function createPluginRuntime({
     // Hidden plugin host windows must not count as app windows.
     owns: (win) => Boolean(sandbox?.owns(win)),
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      for (const channel of ipcHandlers) ipcMain.removeHandler(channel);
+      for (const [channel, listener] of ipcListeners) ipcMain.removeListener(channel, listener);
+      observerCleanup.forEach(cleanup => cleanup());
+      subscribers.clear(); listListeners.clear();
       if (changedTimer) clearTimeout(changedTimer);
       catalog.dispose();
       managed.dispose();
       pages.dispose();
       webUi?.dispose();
       manager.dispose();
+      capabilities.dispose();
+      businessData.dispose();
       bus.dispose();
     }
   };

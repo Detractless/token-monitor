@@ -30,7 +30,7 @@ let service,manager,bus,settings={pluginsEnabled:true,pluginStates:{}},sampleCal
 const child=kind=>service.surfaces().find(item=>item.floating.kind===kind)?.view.webContents;
 async function main(){
  const userDir=path.join(scratch,'plugins');fs.mkdirSync(userDir);unpackPackage(packageDirectory(path.join(root,'docs/plugins/examples/surface-studio')),path.join(userDir,'surface-studio'));
- bus=createDataBus();bus.defineSource('sys.cpu',{minIntervalMs:1000,sample:()=>{sampleCalls++;return {percent:37}}});
+ bus=createDataBus();bus.defineSource('sys.cpu',{minIntervalMs:1000,sample:()=>{sampleCalls++;return 37}});
  manager=createPluginManager({builtinDir:path.join(scratch,'none'),userDir,dataDir:path.join(scratch,'data'),bus,getSettings:()=>settings,saveStates:states=>{settings={...settings,pluginStates:states}}});manager.reload();manager.setEnabled('surface-studio',true);
  const storage=manager.webStorage.bind(manager);manager.webStorage=async(...args)=>{if(args[1]==='get')await delay(250);return storage(...args)};
  const preload=path.join(scratch,'preload.cjs');fs.writeFileSync(preload,`const {contextBridge,ipcRenderer}=require('electron');contextBridge.exposeInMainWorld('bridge',{syncWebSurface:x=>ipcRenderer.invoke('plugins:surface:sync',x),onWebSurfaceReady:cb=>ipcRenderer.on('plugins:surface:ready',()=>cb()),onWebSurfaceFailed:cb=>ipcRenderer.on('plugins:surface:failed',(_e,x)=>cb(x))});ipcRenderer.on('plugins:surface:escape',()=>window.dispatchEvent(new Event('escape')));`);

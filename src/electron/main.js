@@ -253,7 +253,7 @@ async function probeOpenCodeApiKey(apiKey) {
 const openrouterLimits = require('../shared/providers/openrouter/limits');
 const thirdPartyLimits = require('../shared/providers/thirdparty/limits');
 const subscriptionDisplay = require('../shared/subscriptionDisplay');
-const { normalizeCurrency, resolveEffectiveRates, configureRates } = require('../shared/currency');
+const { CURRENCY_CODES, normalizeCurrency, resolveEffectiveRates, configureRates } = require('../shared/currency');
 const { normalizeCompactTokenUnits } = require('../shared/compactTokens');
 const { fetchRates, isCacheStale } = require('../shared/exchangeRates');
 const {
@@ -3797,6 +3797,9 @@ function cacheSharedSubscriptions(doc, hub) {
     settings.subscriptionsCacheHub = hub;
     persistSubscriptionState();
   }
+  // Cache ownership commits in memory even when disk persistence fails. Only
+  // the currently selected backend may invalidate its captured business data.
+  if (hub === currentHubIdentity()) pluginRuntime?.refreshBusinessData();
   return changed;
 }
 
@@ -4279,6 +4282,7 @@ async function saveSubscriptions(list, base) {
       error.code = 'write_failed';
       throw error;
     }
+    pluginRuntime?.refreshBusinessData();
     return settingsForRenderer();
   }
   // The hub is checked at all — rather than left to the version — because a
@@ -4936,7 +4940,7 @@ function publishLocalSessionActivity(patch) {
     : displayPatch;
   presentationCache.updateActivity(previous, latestStats, (stats) => applyActivityPatch(stats, visiblePatch));
   const activityStats = electronPresentationStats(latestStats);
-  pluginRuntime?.publishStats(activityStats);
+  pluginRuntime?.publishStats(activityStats, latestStats);
   updateEdgeDockCells(activityStats);
   sendPush({ event: 'session-activity', data: { patch: visiblePatch, snapshot } });
 }
@@ -4969,7 +4973,7 @@ function sendPush(payload, options = {}) {
       data: { ...payload.data, stats: rendererSnapshots.stamp(latestStats, rendererStats(visibleStats)) }
     };
     scheduleMacWidgetSnapshot(visibleStats, options.widgetProducerOwner);
-    pluginRuntime?.publishStats(visibleStats);
+    pluginRuntime?.publishStats(visibleStats, latestStats);
     updateEdgeDockCells(visibleStats);
     syncCodexPresentationActiveAccount();
     updateTrayDisplay();
@@ -5023,8 +5027,11 @@ function writeRateCache(data) {
 }
 
 function applyEffectiveRates() {
-  effectiveRates = resolveEffectiveRates(rateCache?.rates || {}, settings?.currencyRates || {});
+  const next = resolveEffectiveRates(rateCache?.rates || {}, settings?.currencyRates || {});
+  const changed = CURRENCY_CODES.some(code => effectiveRates?.[code] !== next[code]);
+  effectiveRates = next;
   configureRates(effectiveRates);          // main process's own currency module
+  if (changed) pluginRuntime?.refreshBusinessData();
   return effectiveRates;
 }
 
@@ -9578,6 +9585,33 @@ app.whenReady().then(() => {
         },
         getLocale: () => trayMenuLocale(),
         getContext: () => ({ mode, hubMode: settings.hubMode, hubUrl: settings.hubUrl, deviceId: settings.deviceId }),
+        // Business reads use captured host records, not renderer DTOs or provider
+        // credentials. These adapters never refresh the collector or limits.
+        businessAdapters: {
+          sourceId: () => `${hubModeGeneration}:${mode}:${settings.hubMode}`,
+          extras: stats => ({
+            historyRevision: JSON.stringify([settings.historyEnabled !== false, stats?.deviceHistoryRevision || statsHistoryRevision(stats)]),
+            subscriptions: effectiveSubscriptions(),
+            subscriptionContext: { date: subscriptionDisplay.todayString(), rates: { ...(effectiveRates || resolveEffectiveRates(rateCache?.rates || {}, settings?.currencyRates || {})) } },
+            preferences: { currency: settings.currency, locale: trayMenuLocale(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, sessionTitlesEnabled: settings.sessionTitlesEnabled !== false, historyEnabled: settings.historyEnabled !== false, projectsEnabled: settings.projectsEnabled !== false }
+          }),
+          loadAllTime: ({ stats }) => {
+            const complete = completeLocalSyncStats(stats);
+            if (!complete?.periods?.allTime) return null;
+            const captured = snapshotLocalDevices.get(stats);
+            // Wire records omit lifetime detail by design. The native Month
+            // fallback is display-only and must not enter this accounting API.
+            return {
+              ...complete?.periods?.allTime,
+              sessionSources: (complete?.devices || []).map(device => ({
+                ...device,
+                sessionDetailAvailable: !captured || device.deviceId === captured.localDevice?.deviceId
+              }))
+            };
+          },
+          loadHistory: () => getCompleteHistory(),
+          loadSubscriptions: () => effectiveSubscriptions()
+        },
         isMainSender: (event) => Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents),
         surfaceContext: (event, surface) => surface === 'edgeDock' ? edgeDockController?.webSurface(event.sender) : surface === 'notch' ? notchController?.webSurface(event.sender) : null,
         isSurfaceSender: (event, surface) => {
@@ -9600,7 +9634,7 @@ app.whenReady().then(() => {
       });
       pluginRuntime.start();
       pluginRuntime.manager.onChanged(repaintDockSurfaces);
-      if (latestStats) pluginRuntime.publishStats(electronPresentationStats(latestStats));
+      if (latestStats) pluginRuntime.publishStats(electronPresentationStats(latestStats), latestStats);
     } catch (error) {
       pluginRuntime = null;
       console.warn(`[plugins] runtime failed to start: ${error.message}`);

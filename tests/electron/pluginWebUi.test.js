@@ -40,11 +40,10 @@ test('view bounds stay inside host content at zoom and reject invalid dimensions
   assert.match(CSP,/connect-src 'none'/); assert.match(CSP,/sandbox allow-scripts/);
 });
 
-test('surface documents preserve dual grants, bind declared views and have one document per variant', () => {
+test('surface documents need rendering grant, bind declared views and have one document per variant', () => {
   const m = JSON.parse(fs.readFileSync(path.join(__dirname, '../../docs/plugins/examples/surface-studio/manifest.json')));
   assert.deepEqual(normalizeManifest(m).errors, []);
   for (const change of [
-    v => { v.permissions = v.permissions.filter(p => p !== 'tm.pages'); },
     v => { v.permissions = v.permissions.filter(p => p !== 'ui.web'); },
     v => { v.webUi.documents[0].view = 'missing'; },
     v => { v.webUi.documents[0].slot = 'before'; },
@@ -64,5 +63,18 @@ test('per-document retention is optional, bounded and package-stable', () => {
   for (const retainMs of [-1, Number.MAX_SAFE_INTEGER + 1, 1.5, '30000', 'forever', null, Infinity]) {
     const m = manifest(); m.webUi.documents[0].retainMs = retainMs;
     assert.ok(normalizeManifest(m).errors.length, String(retainMs));
+  }
+});
+
+
+test('Home/page documents require matching declared views; settings needs no display view', () => {
+  for (const target of ['home', 'page', 'settings']) {
+    const m = manifest(); m.permissions = ['ui.web'];
+    m.views = target === 'settings' ? [] : [{ id: 'canvas', title: 'Canvas', surfaces: [target], layout: { type: 'text', text: 'Fallback' } }];
+    m.webUi.documents = [{ id: 'body', entry: 'ui/index.html', target, slot: 'replace', ...(target === 'settings' ? {} : { view: 'canvas' }) }];
+    assert.deepEqual(normalizeManifest(m).errors, [], target);
+    for (const mutate of [copy => { copy.webUi.documents[0].slot = 'before'; }, copy => { copy.webUi.documents[0].variant = 'compact'; }, copy => { copy.webUi.documents[0].view = 'foreign'; }, copy => { copy.webUi.documents.push({ ...copy.webUi.documents[0], id: 'duplicate' }); }, copy => { copy.permissions = []; }]) {
+      const copy = structuredClone(m); mutate(copy); assert.ok(normalizeManifest(copy).errors.length, target);
+    }
   }
 });

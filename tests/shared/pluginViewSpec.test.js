@@ -272,3 +272,19 @@ test('smooth chart receives measured timestamps and gaps without starting a samp
   assert.equal(resolver.resolveNode({ type: 'sparkline', series: [1, 2] }).seriesPoints, undefined);
   bus.dispose();
 });
+
+
+test('Surface Studio resolves the production numeric CPU reading in full and compact fallbacks', () => {
+  const { normalizeManifest } = require('../../src/shared/plugins/manifest');
+  const manifest = require('../../docs/plugins/examples/surface-studio/manifest.json');
+  const result = normalizeManifest(manifest);
+  assert.deepEqual(result.errors, []);
+  const view = result.manifest.views[0];
+  for (const value of [37, 0, 100]) {
+    const resolver = createResolver({ pluginId: manifest.id, read: () => ({ value, at: 1 }), history: () => [] });
+    assert.equal(resolver.resolveNode(view.layout).value, `${value}%`);
+    assert.equal(resolver.resolveCompact(view.compact).value, `${value}%`);
+  }
+  const missing = createResolver({ pluginId: manifest.id, read: () => null, history: () => [] });
+  assert.equal(missing.resolveNode(view.layout).value, '—');
+});

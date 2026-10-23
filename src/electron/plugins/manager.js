@@ -7,6 +7,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const { normalizeManifest } = require('../../shared/plugins/manifest');
 const permissionsApi = require('../../shared/plugins/permissions');
 const { createResolver, formatValue } = require('../../shared/plugins/bindings');
@@ -16,6 +17,8 @@ const { evaluateAlert, alertMessage } = require('../../shared/plugins/alerts');
 const placements = require('../../shared/plugins/placements');
 const { createSupervisor, createRateLimiter } = require('./supervisor');
 const broker = require('./broker');
+const { publicSettings } = require('./settings');
+const { capabilityError } = require('./capabilities');
 const { validMessage } = require('./host/message');
 const { findAction, validateInteraction } = require('../../shared/plugins/interactions');
 
@@ -71,6 +74,8 @@ function createPluginManager({
   sandbox = null,
   notify = () => {},
   netFetch = null,
+  capabilities = null,
+  authorSettings = null,
   getSettings,
   saveStates,
   getLocale = () => 'en',
@@ -84,6 +89,7 @@ function createPluginManager({
   const plugins = new Map();
   const surfaceDemand = new Map(SURFACES.map((surface) => [surface, new Set()]));
   const webVisible = new Map();
+  const dataOwners = new Map();
   const viewListeners = new Set();
   const changeListeners = new Set();
   const supervisor = createSupervisor({ now });
@@ -137,6 +143,9 @@ function createPluginManager({
       const record = { id: entry.name, dir, source, manifest: null, errors: [], codeFile: null };
       try {
         const rawManifest = readManifestFile(dir);
+        const identityStats = [fs.statSync(dir), fs.statSync(path.join(dir, 'manifest.json'))]
+          .map(stat => [stat.dev, stat.ino, stat.birthtimeMs, stat.mtimeMs]);
+        record.settingsIdentity = createHash('sha256').update(JSON.stringify([identityStats, rawManifest])).digest('hex');
         assertHostCompatibility(rawManifest);
         const result = normalizeManifest(rawManifest, { source });
         record.errors = result.errors;
@@ -364,7 +373,19 @@ function createPluginManager({
     runtime.requests.clear();
   }
 
+  function releaseWorkerData(plugin) {
+    const owner = dataOwners.get(plugin.id);
+    if (owner) capabilities?.release(owner);
+    dataOwners.delete(plugin.id);
+  }
+
+  function dataAuth(plugin) {
+    return { pluginId: plugin.id, permissions: grantOf(plugin).permissions,
+      active: isActive(plugin) && !mutating && !disposed };
+  }
+
   function stopWorker(plugin, { immediate = false } = {}) {
+    releaseWorkerData(plugin);
     const runtime = plugin.runtime;
     runtime.generation += 1;
     runtime.pendingInteractions.clear();
@@ -387,6 +408,7 @@ function createPluginManager({
   function setWorkerMode(plugin, mode) {
     const runtime = plugin.runtime;
     if (!mode) {
+      releaseWorkerData(plugin);
       if (runtime.mode === null && runtime.state === 'stopped') return;
       if (runtime.tickTimer) clearTimer(runtime.tickTimer);
       runtime.tickTimer = null;
@@ -441,6 +463,7 @@ function createPluginManager({
     if (!plugin) return;
     const runtime = plugin.runtime;
     const wantedMode = runtime.mode;
+    releaseWorkerData(plugin);
     runtime.generation += 1;
     runtime.pendingInteractions.clear();
     cancelRequests(runtime);
@@ -518,6 +541,19 @@ function createPluginManager({
     const grant = grantOf(plugin);
     try {
       if (!runtime.mode) throw new Error('plugin is idle');
+      if (message.op.startsWith('data.') || message.op.startsWith('settings.')) {
+        if (!capabilities) throw new Error('capability unavailable');
+        let owner = dataOwners.get(plugin.id);
+        if (!owner) { owner = { pluginId: plugin.id, generation }; dataOwners.set(plugin.id, owner); }
+        const valid = () => plugins.get(plugin.id) === plugin && runtime.generation === generation && runtime.mode && dataOwners.get(plugin.id) === owner && isActive(plugin);
+        const value = await capabilities.call(owner, message.op, args, {
+          auth: () => ({ ...dataAuth(plugin), revision: generation, active: Boolean(valid()) }),
+          settings: authorSettingsAccess(plugin, true),
+          send: event => { if (valid()) sandbox?.send(plugin.id, { type: 'business-data', ...event }); }
+        });
+        if (!valid()) throw new Error('capability revoked');
+        return reply(plugin, id, { ok: true, value });
+      }
       if (message.op === 'storage.get') return reply(plugin, id, { ok: true, value: plugin.storage.get(args.key) });
       if (message.op === 'storage.set') return reply(plugin, id, { ok: true, value: plugin.storage.set(args.key, args.value) });
       if (message.op === 'storage.delete') return reply(plugin, id, { ok: true, value: plugin.storage.delete(args.key) });
@@ -547,7 +583,7 @@ function createPluginManager({
       }
       throw new Error(`unknown operation ${String(message.op).slice(0, 40)}`);
     } catch (error) {
-      reply(plugin, id, { ok: false, error: String(error.message || error).slice(0, 300) });
+      reply(plugin, id, { ok: false, error: capabilityError(error).message, code: capabilityError(error).code, fields: capabilityError(error).fields });
     }
   }
 
@@ -811,6 +847,7 @@ function createPluginManager({
       missing,
       risk: permissionsApi.riskSummary(manifest),
       hasCode: Boolean(manifest.main),
+      settings: manifest.settings || null,
       background: {
         supported: Boolean(manifest.background || manifest.alerts.length),
         enabled: state?.background === true
@@ -833,8 +870,33 @@ function createPluginManager({
         failures: supervisor.failures(plugin.id),
         lastError: runtime.lastError
       } : null,
+      settingsIdentity: plugin.settingsIdentity,
+      webRevision: runtime.webRevision,
       logs: plugin.logs.slice(-20)
     };
+  }
+
+  function authorSettingsAccess(plugin, publicAccess = false) {
+    const project = value => publicAccess ? publicSettings(value) : value;
+    const schema = plugin?.manifest?.settings;
+    const requireStore = () => {
+      if (disposed || plugins.get(plugin?.id) !== plugin || !schema || !authorSettings) throw new Error('plugin settings unavailable');
+    };
+    return {
+      get() { requireStore(); return project(authorSettings.get(plugin.id, schema)); },
+      update(input) { requireStore(); const result = authorSettings.update(plugin.id, schema, input); notifyAuthorSettings(plugin, result); return project(result); },
+      reset(input) { requireStore(); const result = authorSettings.reset(plugin.id, schema, publicAccess ? { schemaVersion: input?.schemaVersion ?? null, revision: input?.expectedRevision } : input); notifyAuthorSettings(plugin, result); return project(result); }
+    };
+  }
+  const authorSettingsListeners = new Set();
+  function notifyAuthorSettings(plugin, value) {
+    // A failed observer must never turn a committed save into a failed request.
+    const observe = fn => { try { fn(); } catch (error) { addLog(plugin, 'warn', `settings observer: ${error.message}`); } };
+    observe(() => {
+      if (plugin.runtime.mode && isActive(plugin)) sandbox?.send(plugin.id, { type: 'author-settings', value: publicSettings(value) });
+    });
+    for (const listener of authorSettingsListeners) observe(() => listener(plugin.id, publicSettings(value)));
+    observe(emitChanged);
   }
 
   function writeState(pluginId, patch) {
@@ -848,8 +910,17 @@ function createPluginManager({
       const [id, docId, extra] = String(ref || '').split('/');
       const plugin = plugins.get(id);
       const document = plugin?.manifest?.webUi?.documents.find(doc => doc.id === docId);
-      if (extra || !document || !isActive(plugin) || !permissionsApi.hasPermission(grantOf(plugin), 'ui.web') || !permissionsApi.hasPermission(grantOf(plugin), 'tm.pages') || mutating || disposed) throw new Error('web document is unavailable');
+      if (extra || !document || !isActive(plugin) || !permissionsApi.hasPermission(grantOf(plugin), 'ui.web') || (['model', 'tool', 'device'].includes(document.target) && !permissionsApi.hasPermission(grantOf(plugin), 'tm.pages')) || mutating || disposed) throw new Error('web document is unavailable');
       return { pluginId: id, document, manifest: plugin.manifest, dir: plugin.dir, revision: plugin.runtime.webRevision, locale: getLocale() };
+    },
+    getAuthorSettings(id) { return authorSettingsAccess(plugins.get(String(id))).get(); },
+    getPublicAuthorSettings(id) { return authorSettingsAccess(plugins.get(String(id)), true).get(); },
+    updateAuthorSettings(id, input) { return authorSettingsAccess(plugins.get(String(id))).update(input); },
+    webAuthorSettings(ref) { return authorSettingsAccess(plugins.get(this.webDocument(ref).pluginId), true); },
+    onAuthorSettings(callback) { authorSettingsListeners.add(callback); return () => authorSettingsListeners.delete(callback); },
+    webDataAuth(ref) {
+      const { pluginId } = this.webDocument(ref);
+      return dataAuth(plugins.get(pluginId));
     },
     setWebVisible(owner, ref) {
       if (ref) { this.webDocument(ref); webVisible.set(owner, ref); } else webVisible.delete(owner);
@@ -1000,6 +1071,7 @@ function createPluginManager({
       sandbox?.stopAll();
       for (const consumer of appliedDemands.keys()) bus.clearDemand(consumer);
       appliedDemands.clear();
+      viewListeners.clear(); changeListeners.clear(); authorSettingsListeners.clear();
     }
   };
 }

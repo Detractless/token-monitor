@@ -37,6 +37,30 @@
     const sourceDraft = { url: '', publicKey: '' };
     const chosenVersions = new Map();
     const detailState = new Map();
+    const authorSettings = new Map();
+    let editorPluginId = '', editorBody = null;
+    const settingsIdentities = new Map();
+    const presentation = window.TokenMonitorPluginPresentationWeb?.create({
+      document, window, bridge: api, surface: 'settings',
+      active: () => activeTab === 'installed' && !diagnostics && selectedPluginId === editorPluginId,
+      stateFor: id => {
+        const plugin = list?.plugins.find(item => item.id === id);
+        return { status: list?.enabled && plugin?.enabled && plugin.status === 'active' ? 'ok' : 'disabled',
+          revision: plugin?.webRevision, webDocuments: plugin?.webDocuments?.filter(doc => doc.target === 'settings') || [] };
+      },
+      reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    });
+    function reconcileSettings() {
+      const installed = new Map((list?.plugins || []).map(plugin => [plugin.id, JSON.stringify([plugin.settingsIdentity, plugin.version, plugin.source])]));
+      for (const [id, identity] of settingsIdentities) {
+        if (installed.get(id) !== identity) {
+          authorSettings.delete(id);
+          if (editorPluginId === id) editorPluginId = '';
+        }
+      }
+      settingsIdentities.clear();
+      for (const [id, identity] of installed) settingsIdentities.set(id, identity);
+    }
     let tabs = null, content = null, renderedTab = 'installed';
     const tabControls = new Map();
 
@@ -532,6 +556,157 @@
       return section;
     }
 
+    function authorText(value) {
+      if (typeof value === 'string') return value;
+      const locale = document.documentElement.lang || 'en';
+      return window.TokenMonitorPluginLocalized?.localize(value, locale)
+        || value?.[locale] || value?.[locale.split('-')[0]] || value?.en || value?.[''] || Object.values(value || {})[0] || '';
+    }
+
+    async function loadAuthorSettings(plugin, state) {
+      try {
+        const snapshot = await api.getSettings(plugin.id);
+        if (authorSettings.get(plugin.id) !== state) return;
+        state.snapshot = snapshot; state.draft = { ...snapshot.values }; state.errors = { ...snapshot.errors };
+        state.message = ''; state.dirty = false;
+      } catch {
+        state.message = 'loadFailed';
+      } finally {
+        state.loading = false;
+        if (authorSettings.get(plugin.id) === state && selectedPluginId === plugin.id) render();
+      }
+    }
+
+    function authorSettingsSection(plugin) {
+      const section = detailSection(t('plugins.authorSettings.title'));
+      section.classList.add('plugin-author-settings');
+      let state = authorSettings.get(plugin.id);
+      if (!state) {
+        state = { loading: true, snapshot: null, draft: {}, errors: {}, message: '', dirty: false };
+        authorSettings.set(plugin.id, state);
+        // The static form never enables a plugin or requests display demand.
+        void Promise.resolve().then(() => loadAuthorSettings(plugin, state));
+      }
+      const status = el(document, 'p', 'settings-note plugin-author-status');
+      status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+      const refresh = () => {
+        if (busy || state.loading) return;
+        state.loading = true; render(); void loadAuthorSettings(plugin, state);
+      };
+      if (state.loading || !state.snapshot) {
+        section.setAttribute('aria-busy', String(state.loading));
+        status.textContent = t(`plugins.authorSettings.${state.loading ? 'loading' : 'loadFailed'}`);
+        section.append(status);
+        if (!state.loading) section.append(button(t('plugins.authorSettings.reload'), refresh));
+        return section;
+      }
+      const snapshot = state.snapshot;
+      section.append(el(document, 'p', 'settings-note', t('plugins.authorSettings.note')));
+      if (!plugin.enabled || !list.enabled) section.append(el(document, 'p', 'settings-note', t('plugins.authorSettings.disabledNote')));
+      const form = el(document, 'form', 'plugin-author-form'); form.noValidate = true;
+      for (const field of snapshot.schema.fields) {
+        const row = el(document, 'div', 'plugin-author-field');
+        const id = `${container.id || 'plugin-settings'}-author-${plugin.id}-${field.id}`;
+        const label = el(document, 'label', 'plugin-author-label', authorText(field.label)); label.htmlFor = id;
+        const input = el(document, field.type === 'select' ? 'select' : 'input', 'plugin-author-input');
+        input.id = id; input.dataset.controlKey = `author-${field.id}`; input.disabled = busy || snapshot.readOnly;
+        if (field.type === 'select') {
+          for (const option of field.options) {
+            const node = el(document, 'option', '', authorText(option.label)); node.value = option.value; input.append(node);
+          }
+          input.value = state.draft[field.id] ?? '';
+        } else if (field.type === 'boolean') {
+          input.type = 'checkbox'; input.checked = state.draft[field.id] === true;
+          row.classList.add('plugin-author-checkbox');
+        } else {
+          input.type = field.type === 'number' ? 'number' : 'text'; input.value = state.draft[field.id] ?? '';
+          if (field.type === 'number') {
+            input.step = field.integer ? '1' : 'any';
+            if (field.min !== undefined) input.min = String(field.min);
+            if (field.max !== undefined) input.max = String(field.max);
+          } else { input.minLength = field.minLength; input.maxLength = field.maxLength; }
+        }
+        const describedBy = [];
+        row.append(label, input);
+        if (field.description) {
+          const description = el(document, 'p', 'settings-note', authorText(field.description));
+          description.id = `${id}-description`; describedBy.push(description.id); row.append(description);
+        }
+        const error = el(document, 'p', 'plugin-author-error', t('plugins.authorSettings.invalidField'));
+        error.id = `${id}-error`; error.hidden = !state.errors[field.id]; describedBy.push(error.id); row.append(error);
+        input.setAttribute('aria-describedby', describedBy.join(' '));
+        input.setAttribute('aria-invalid', String(Boolean(state.errors[field.id])));
+        input.addEventListener(field.type === 'boolean' || field.type === 'select' ? 'change' : 'input', () => {
+          if (busy || snapshot.readOnly) return;
+          state.draft[field.id] = field.type === 'boolean' ? input.checked
+            : field.type === 'number' ? (input.value === '' ? null : input.valueAsNumber) : input.value;
+          delete state.errors[field.id]; error.hidden = true; input.setAttribute('aria-invalid', 'false');
+          state.dirty = true; state.message = ''; status.textContent = ''; save.disabled = false;
+        });
+        form.append(row);
+      }
+      async function commit() {
+        if (busy || snapshot.readOnly || !state.dirty) return;
+        const patch = { ...state.draft };
+        const hadFocus = form.contains(document.activeElement);
+        state.message = 'saving'; status.textContent = t('plugins.authorSettings.saving');
+        await run(async () => {
+          try {
+            const next = await api.updateSettings(plugin.id, { schemaVersion: snapshot.schemaVersion, expectedRevision: snapshot.revision, patch });
+            state.snapshot = next; state.draft = { ...next.values }; state.errors = { ...next.errors };
+            state.dirty = false; state.message = 'saved';
+          } catch (error) {
+            state.errors = error.fields || {};
+            state.message = error.code === 'settings-conflict' || String(error.message).includes('settings-conflict') ? 'conflict'
+              : Object.keys(state.errors).length ? 'invalid' : 'saveFailed';
+          }
+          return null;
+        });
+        if (hadFocus && document.activeElement === document.body && selectedPluginId === plugin.id) {
+          const feedback = content.querySelector('.plugin-author-status');
+          if (feedback) { feedback.tabIndex = -1; feedback.focus({ preventScroll: true }); }
+        }
+      }
+      form.addEventListener('submit', event => { event.preventDefault(); void commit(); });
+      const actions = el(document, 'div', 'settings-actions plugin-author-actions');
+      const save = button(t('plugins.authorSettings.save'), () => void commit());
+      save.dataset.controlKey = 'author-save'; save.disabled = busy || snapshot.readOnly || !state.dirty;
+      const defaults = button(t('plugins.authorSettings.defaults'), () => {
+        if (busy || snapshot.readOnly) return;
+        state.draft = Object.fromEntries(snapshot.schema.fields.map(field => [field.id, field.default]));
+        state.dirty = true; state.errors = {}; state.message = 'defaultsNote'; render();
+      });
+      defaults.dataset.controlKey = 'author-defaults'; defaults.disabled = busy || snapshot.readOnly;
+      const reload = button(t('plugins.authorSettings.reload'), refresh); reload.dataset.controlKey = 'author-reload';
+      actions.append(save, defaults, reload); form.append(actions);
+      status.textContent = state.message ? t(`plugins.authorSettings.${state.message}`)
+        : snapshot.readOnly ? t('plugins.authorSettings.newerSchema')
+          : Object.keys(state.errors).length ? t('plugins.authorSettings.invalid') : '';
+      const richDocument = plugin.webDocuments?.find(doc => doc.target === 'settings');
+      const canEditRich = presentation && richDocument && list.enabled && plugin.enabled && plugin.status === 'active' && !snapshot.readOnly;
+      if (editorPluginId === plugin.id && !canEditRich) editorPluginId = '';
+      if (canEditRich) {
+        const open = editorPluginId === plugin.id;
+        const toggle = button(t(`plugins.authorSettings.${open ? 'closeEditor' : 'editor'}`), () => {
+          editorPluginId = open ? '' : plugin.id; render();
+          content.querySelector('[data-control-key="author-editor"]')?.focus({ preventScroll: true });
+        });
+        toggle.dataset.controlKey = 'author-editor'; toggle.setAttribute('aria-expanded', String(open));
+        const editorId = `${container.id || 'plugin-settings'}-author-editor`;
+        toggle.setAttribute('aria-controls', editorId);
+        const editorActions = el(document, 'div', 'settings-actions'); editorActions.append(toggle); section.append(editorActions);
+        const retained = open && editorBody?.isConnected && editorBody.dataset.pluginId === plugin.id;
+        const body = retained ? editorBody : el(document, 'div', 'plugin-author-editor'); body.id = editorId;
+        body.dataset.pluginId = plugin.id;
+        body.replaceChildren(form, status); section.append(body);
+        if (open) {
+          editorBody = body;
+          if (!retained) presentation.track({ container: body, ref: plugin.id });
+        }
+      } else section.append(form, status);
+      return section;
+    }
+
     function pluginDetail(plugin) {
       const wrap = el(document, 'section', 'plugin-detail'); wrap.dataset.pluginId = plugin.id;
       const toolbar = el(document, 'div', 'plugin-detail-toolbar');
@@ -559,6 +734,7 @@
         }
         return wrap;
       }
+      if (plugin.settings && api.getSettings && api.updateSettings) wrap.append(authorSettingsSection(plugin));
       // Disabled plugins keep their saved placements visible, without offering
       // mutations until enabled. The count is a selection, not runtime activity.
       if (plugin.status === 'disabled') {
@@ -641,6 +817,8 @@
 
     function render() {
       if (!container) return;
+      reconcileSettings();
+      presentation?.suspend();
       const nodes = [];
       if (!list) {
         container.replaceChildren(el(document, 'p', 'settings-note', t('plugins.view.loading')));
@@ -736,6 +914,7 @@
         render();
       },
       render,
+      dispose() { presentation?.dispose(); authorSettings.clear(); },
       summary() {
         if (!list) return '';
         const active = list.plugins.filter((plugin) => plugin.status === 'active').length;

@@ -18,7 +18,7 @@ function fixture(t, fault) {
   let settings = { pluginStates: {}, homeModuleOrder: 'summary,plugin:test-plugin/page,plugin:other/page', hiddenHomeModules: '', edgeDockItems: [], notchPluginPages: ['test-plugin/page', 'other/page'] };
   let stopped = 0;
   const manager = { list: () => ({ plugins: [] }), beginMutation: () => stopped++, endMutation() {}, reload() {} };
-  const args = { root: path.join(dir, 'manager'), userDir: path.join(dir, 'plugins'), dataDir: path.join(dir, 'data'), manager,
+  const args = { root: path.join(dir, 'manager'), userDir: path.join(dir, 'plugins'), dataDir: path.join(dir, 'data'), settingsDir: path.join(dir, 'author-settings'), manager,
     getSettings: () => settings, saveSettings: patch => { settings = { ...settings, ...patch }; }, fault };
   const api = createManagedPlugins(args); api.recover();
   const install = (version, extra) => api.install(api.preview(parsePackage(bytes(version, extra))).token);
@@ -149,3 +149,24 @@ test('registry and journal capacity failures leave prior installs recoverable', 
   assert.equal(packageDirectory(path.join(f.args.userDir, 'test-plugin')).manifest.version, '1.0.0');
   createManagedPlugins(f.args).recover();
 });
+
+for (const point of ['old-moved', 'registry-written', 'settings-written', 'reloaded']) {
+  test(`author settings uninstall rollback preserves bytes after ${point}`, t => {
+    let armed = false;
+    const f = fixture(t, step => { if (armed && step === point) throw new Error('interrupted'); });
+    f.install('1.0.0');
+    fs.mkdirSync(f.args.settingsDir);
+    const file = path.join(f.args.settingsDir, 'test-plugin.json');
+    const original = '{"version":1,"revision":7,"values":{"private":"keep"}}';
+    fs.writeFileSync(file, original);
+    armed = true;
+    assert.throws(() => f.api.uninstall('test-plugin', { keepData: false }), /interrupted/);
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+    armed = false;
+    f.api.uninstall('test-plugin', { keepData: true });
+    assert.equal(fs.readFileSync(file, 'utf8'), original);
+    f.install('1.0.0');
+    f.api.uninstall('test-plugin', { keepData: false });
+    assert.equal(fs.existsSync(file), false);
+  });
+}

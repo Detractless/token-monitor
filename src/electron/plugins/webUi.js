@@ -5,6 +5,8 @@ const crypto = require('node:crypto');
 const { TYPES, TARGETS, pageSnapshot } = require('../../shared/plugins/webUi');
 const { packageDirectory, readBounded } = require('./package');
 const { createRateLimiter } = require('./supervisor');
+const { capabilityError } = require('./capabilities');
+const { publicSettings } = require('./settings');
 // Internal resource policy; not author-controlled or a user-facing setting.
 const WARM_TTL_MS = 30_000, WARM_LIMIT = 3, WARM_MEMORY_KB = 256 * 1024, LIFECYCLE_TIMEOUT_MS = 750;
 const SCHEME = 'tm-plugin-ui';
@@ -27,7 +29,7 @@ function themeContext(raw) {
   }
   return { colors, dark: raw?.dark !== false, reducedMotion: raw?.reducedMotion === true, font: typeof raw?.font === 'string' && raw.font.length <= 512 && /^[\p{L}\p{N}\s,.'"_-]+$/u.test(raw.font) ? raw.font : 'system-ui' };
 }
-function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = () => null, surfacePlaced = () => false, file }) {
+function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = () => null, surfacePlaced = () => false, presentationContext = () => null, documentCapabilities = {}, file }) {
   const { WebContentsView, BrowserWindow, ipcMain, session } = electron;
   let selections = {}, disposed = false;
   const mounted = new Map(), parked = new Map();
@@ -38,6 +40,15 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const temp = `${file}.tmp`; fs.writeFileSync(temp, JSON.stringify(next), { mode: 0o600 }); fs.renameSync(temp, file);
     selections = next;
+  }
+  const channel = (item, name) => `plugins:${item.presentation ? 'presentation' : item.floating ? 'surface' : 'web'}:${name}`;
+  const viewRefFor = info => info.document.target === 'settings' ? info.pluginId : `${info.pluginId}/${info.document.view}`;
+  function authorized(item, allowHidden = false) {
+    manager.webDocument(item.ref);
+    if (item.presentation) {
+      const scope = presentationContext({ sender: item.host, senderFrame: item.host.mainFrame }, item.target, viewRefFor(item));
+      if (!scope || !allowHidden && !scope.visible) throw new Error('presentation owner revoked');
+    }
   }
   function stop(reason = '', key = 'main') {
     const old = mounted.get(key);
@@ -50,7 +61,7 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     parked.delete(old);
     clearTimeout(old.expiry); clearTimeout(old.lifecycleDeadline);
     old.view.webContents.debugger.removeListener('detach', old.detached);
-    clearInterval(old.watchdog); clearTimeout(old.resizeDeadline); bus.clearDemand(old.owner); manager.setWebVisible(old.owner, null); old.unsubscribe?.();
+    clearInterval(old.watchdog); clearTimeout(old.resizeDeadline); bus.clearDemand(old.owner); manager.setWebVisible(old.owner, null); old.unsubscribe?.(); documentCapabilities.release?.(old.owner);
     old.window.removeListener('hide', old.hidden); old.window.removeListener('minimize', old.hidden); old.window.removeListener('closed', old.closed);
     try { old.window.contentView.removeChildView(old.view); } catch {}
     if (!old.view.webContents.isDestroyed()) old.view.webContents.close({ waitForBeforeUnload: false });
@@ -59,7 +70,12 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     old.host.removeListener('render-process-gone', old.closed);
     old.host.removeListener('destroyed', old.closed);
     if (old.floating && !old.parked && !old.window.isDestroyed()) { old.window.setFocusable(false); old.host.focus(); }
-    if (reason && !old.parked && !old.host.isDestroyed()) old.host.send(old.floating ? 'plugins:surface:failed' : 'plugins:web:failed', old.floating ? { ref: old.ref, reason } : reason);
+    if (reason && !old.parked && !old.host.isDestroyed()) old.host.send(channel(old, 'failed'), old.floating || old.presentation ? { ref: old.ref, instance: old.instance, reason } : reason);
+  }
+  function presentationMemory() {
+    const metrics = electron.app?.getAppMetrics?.() || [];
+    const pids = new Set([...mounted.values()].filter(item => item.presentation).map(item => item.view.webContents.getOSProcessId()));
+    return [...pids].reduce((total, pid) => total + (metrics.find(metric => metric.pid === pid)?.memory?.workingSetSize || 0), 0);
   }
   function trimCache() {
     const metrics = electron.app?.getAppMetrics?.() || [];
@@ -96,8 +112,9 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     // Incomplete/failed documents never enter the cache or finish in hiding.
     if (!item.ready || item.awaitingResume || disposed || item.document.retainMs === 0) { destroy(item); return; }
     mounted.delete(key); item.parked = true; item.present = false;
+    if (item.presentation && item.view.webContents.isFocused()) item.host.focus();
     item.view.setVisible(false); clearTimeout(item.resizeDeadline);
-    bus.clearDemand(item.owner); manager.setWebVisible(item.owner, null);
+    bus.clearDemand(item.owner); manager.setWebVisible(item.owner, null); documentCapabilities.release?.(item.owner);
     if (item.floating && !item.window.isDestroyed()) { item.window.setFocusable(false); item.host.focus(); }
     parked.set(item, true);
     const retainMs = item.document.retainMs ?? WARM_TTL_MS;
@@ -123,18 +140,21 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     transition(item, 'active', epoch => {
       // Capability, placement and host ownership are rechecked at adoption;
       // changes during the async thaw also destroy the retained document.
-      manager.webDocument(item.ref);
-      manager.setWebVisible(item.owner, item.ref);
+      authorized(item);
+      if (item.target !== 'settings') manager.setWebVisible(item.owner, item.ref);
       if (item.sources.length) bus.setDemand(item.owner, { sources: item.sources.map(s => manager.webSource(item.ref, s)), intervalMs: manager.webDocument(item.ref).manifest.visible.intervalMs });
       item.view.webContents.send('plugins:web:context', item.context);
       item.view.webContents.send('plugins:web:data', reading(item));
+      if (manager.getPublicAuthorSettings) {
+        try { item.view.webContents.send('plugins:web:settings', manager.getPublicAuthorSettings(item.pluginId)); } catch { /* No schema is a valid document. */ }
+      }
       item.view.webContents.send('plugins:web:resume', epoch);
     });
   }
   function allowed(event) {
     const item = [...mounted.values()].find(item => item.view.webContents === event.sender);
     if (!item || item.resuming || event.sender !== item.view.webContents || event.senderFrame !== event.sender.mainFrame || event.sender.getURL() !== item.url) throw new Error('document capability revoked');
-    manager.webDocument(item.ref);
+    authorized(item);
     if (!item.limiter.take()) { stop('rate-limit', item.key); throw new Error('web UI rate limit'); }
     return item;
   }
@@ -149,7 +169,7 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
       // Lifecycle control is held only while parked/thawing, so ordinary
       // developer tools remain available on an active document.
       if (item.ownsDebugger) { item.ownsDebugger = false; item.view.webContents.debugger.detach(); }
-      item.host.send(item.floating ? 'plugins:surface:ready' : 'plugins:web:ready');
+      item.host.send(channel(item, 'ready'));
       return true;
     }
     if (op === 'present') {
@@ -158,7 +178,17 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
       return true;
     }
     if (op === 'context') return item.context;
+    if (['data.query', 'data.subscribe', 'data.unsubscribe', 'settings.get', 'settings.update', 'settings.reset'].includes(op)) {
+      if (!documentCapabilities.call) throw new Error('unsupported capability');
+      const epoch = item.epoch;
+      return Promise.resolve().then(() => documentCapabilities.call(item, op, args)).then(value => {
+        if (item.dead || item.parked || item.epoch !== epoch || mounted.get(item.key) !== item) throw new Error('document capability revoked');
+        authorized(item);
+        return { __tmCapability: 1, ok: true, value };
+      }).catch(error => ({ __tmCapability: 1, ok: false, error: capabilityError(error) }));
+    }
     if (op === 'subscribe') {
+      if (item.target === 'settings') throw new Error('settings documents use the business data API');
       if (!Array.isArray(args) || args.length > 16 || !args.every(s => typeof s === 'string' && manager.webReadAllowed(item.ref, s))) throw new Error('source permission denied');
       item.sources = [...new Set(args)];
       const intervalMs = manager.webDocument(item.ref).manifest.visible.intervalMs;
@@ -166,15 +196,21 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
       return reading(item);
     }
     if (op === 'restore') {
-      if (item.floating) throw new Error('restore is only available for original App pages');
+      if (item.floating || item.presentation) throw new Error('restore is only available for original App pages');
       const next = { ...selections }; delete next[item.target]; save(next); item.host.send('plugins:web:restore'); stop(); return true;
     }
     if (['get', 'set', 'delete'].includes(op)) return manager.webStorage(item.ref, op, args?.key, args?.value);
     throw new Error('unsupported capability');
   });
+  const offSettings = manager.onAuthorSettings?.((pluginId, value) => {
+    for (const item of mounted.values()) {
+      if (item.pluginId !== pluginId || item.dead || item.resuming || item.awaitingResume) continue;
+      try { authorized(item); item.view.webContents.send('plugins:web:settings', publicSettings(value)); } catch { destroy(item, 'unavailable'); }
+    }
+  });
   const changed = manager.onChanged(() => {
     for (const item of allItems()) {
-      try { if (manager.webDocument(item.ref).revision !== item.revision) destroy(item, 'changed'); } catch { destroy(item, 'unavailable'); }
+      try { authorized(item, item.parked); if (manager.webDocument(item.ref).revision !== item.revision) destroy(item, 'changed'); } catch { destroy(item, 'unavailable'); }
     }
   });
   function mount(host, info, rect, context, key = 'main', floating = null, contentScale = 1, present = true) {
@@ -217,7 +253,7 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
       const item = { ...info, key, floating, ref: info.ref, target: info.document.target, host, window: win, view, session: ses, assets, origin, url, context, ready: false, loaded: false, prepared: false, present, sources: [], owner: `web:${view.webContents.id}`, limiter: createRateLimiter({ capacity: 100, perSecond: 30 }), dead: false, parked: false, epoch: 0, lifecycle: Promise.resolve(), hidden: () => { if (mounted.get(key) === item) park(key); }, closed: () => destroy(item), detached: () => { if (item.ownsDebugger) destroy(item, 'load-failed'); }, resized: () => { if (mounted.get(key) === item) suspendGeometry(key); } };
       mounted.set(key, item);
       view.webContents.debugger.on('detach', item.detached);
-      manager.setWebVisible(item.owner, item.ref);
+      if (item.target !== 'settings') manager.setWebVisible(item.owner, item.ref);
       view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       for (const name of ['will-navigate', 'will-frame-navigate', 'will-redirect', 'will-attach-webview']) view.webContents.on(name, event => event.preventDefault());
       view.webContents.on('render-process-gone', () => { destroy(item, 'renderer-stopped'); });
@@ -229,11 +265,17 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
       host.on('render-process-gone', item.closed);
       host.on('destroyed', item.closed);
       if (floating) attachSurfaceInput(item);
+      if (item.presentation) {
+        view.webContents.on('before-input-event', (event, input) => {
+          if (input.key === 'Escape' && input.type === 'keyDown') { event.preventDefault(); host.focus(); }
+        });
+      }
       let outstanding = false;
       item.watchdog = setInterval(() => {
         const metrics = electron.app?.getAppMetrics?.().find(metric => metric.pid === view.webContents.getOSProcessId());
         if ((metrics?.memory?.workingSetSize || 0) > 256 * 1024) { destroy(item, 'memory-budget'); return; }
         trimCache();
+        if (item.presentation && !item.parked && presentationMemory() > 512 * 1024) { destroy(item, 'memory-budget'); return; }
         if (item.dead || item.parked || item.resuming || item.awaitingResume) return;
         if (outstanding) { destroy(item, 'unresponsive'); return; }
         outstanding = true;
@@ -258,11 +300,12 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     item.ready = true;
     // Preparation includes the initial context/storage/subscription promises,
     // not merely navigation. The host still owns eligibility and reveal.
-    item.host.send(item.floating ? 'plugins:surface:ready' : 'plugins:web:ready');
+    item.host.send(channel(item, 'ready'));
   }
   function suspendGeometry(key) {
     const item = mounted.get(key);
     if (!item) return;
+    if (item.presentation) { park(key); item.host.send(channel(item, 'ready')); return; }
     if (!item.floating) { stop('', key); return; }
     item.present = false; item.view.setVisible(false);
     clearTimeout(item.resizeDeadline);
@@ -322,6 +365,35 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     for (const key of [...mounted.keys()]) if (key.startsWith(prefix) && !keep.has(key)) park(key);
     return { mounted: refs };
   });
+  // Trusted host presentation only. The author bridge cannot name a window,
+  // view, rectangle or instance. Main supplies independent placement authority.
+  ipcMain.handle('plugins:presentation:sync', (event, input) => {
+    const host = event.sender, surface = input?.surface;
+    if (!['home', 'page', 'settings'].includes(surface) || event.senderFrame !== host.mainFrame || !presentationContext(event, surface, null)) throw new Error('presentation host required');
+    const prefix = `presentation:${host.id}:${surface}:`, keep = new Set(), ready = [];
+    if (!disposed && input.visible && Array.isArray(input.entries)) {
+      for (const entry of input.entries.slice(0, 4)) {
+        try {
+          if (!entry || !/^[a-zA-Z0-9-]{1,64}$/.test(entry.instance)) continue;
+          const info = manager.webDocument(entry.ref), viewRef = viewRefFor(info);
+          if (info.document.target !== surface || (info.document.variant || 'full') !== 'full' || entry.viewRef !== viewRef || !presentationContext(event, surface, viewRef)?.visible) continue;
+          const key = `${prefix}${entry.instance}:${entry.ref}`;
+          if (keep.has(key)) continue;
+          // Reject clipping instead of shifting the native document over shell UI.
+          const rect = entry.rect, win = BrowserWindow.fromWebContents(host), zoom = host.getZoomFactor();
+          if (!win || !rect || !['x','y','width','height'].every(k => Number.isFinite(rect[k])) || rect.x < 0 || rect.y < 0 || rect.width < 40 || rect.height < 40 || (rect.x + rect.width) * zoom > win.getContentSize()[0] || (rect.y + rect.height) * zoom > win.getContentSize()[1]) continue;
+          // Active admission is separate from the bounded frozen cache.
+          if (!mounted.has(key) && [...mounted.values()].filter(item => item.presentation).length >= 8 || !mounted.has(key) && presentationMemory() > 512 * 1024) continue;
+          const context = { locale: info.locale, surface, variant: 'full', theme: themeContext(input.theme), viewport: { width: rect.width, height: rect.height } };
+          mount(host, { ...info, ref: entry.ref, presentation: true, instance: entry.instance }, rect, context, key);
+          const item = mounted.get(key);
+          if (item) { keep.add(key); if (item.ready && !item.resuming && !item.awaitingResume) ready.push(entry.instance); }
+        } catch { /* Preserve the lightweight fallback. */ }
+      }
+    }
+    for (const key of [...mounted.keys()]) if (key.startsWith(prefix) && !keep.has(key)) park(key);
+    return { mounted: ready };
+  });
   function attachSurfaceInput(item) {
     const { view, host, window: win, floating, key } = item;
     // Native interception cannot be suppressed by author JS. Compact rail art
@@ -347,7 +419,19 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     win.on('blur', blur);
     view.webContents.once('destroyed', () => win.removeListener('blur', blur));
   }
-  return { stop, cached: () => [...parked.keys()], current: () => mounted.get('main') || null, surfaces: () => [...mounted.values()].filter(item => item.floating),
+  return { stop, presentations: () => [...mounted.values()].filter(item => item.presentation), cached: () => [...parked.keys()], current: () => mounted.get('main') || null, surfaces: () => [...mounted.values()].filter(item => item.floating),
+    releasePresentationHost(host) {
+      for (const item of allItems()) if (item.presentation && item.host === host) destroy(item);
+    },
+    refreshPresentations() {
+      for (const item of allItems()) if (item.presentation) {
+        try {
+          authorized(item, true);
+          const scope = presentationContext({ sender: item.host, senderFrame: item.host.mainFrame }, item.target, viewRefFor(item));
+          if (!scope?.visible && !item.parked) park(item.key);
+        } catch { destroy(item, 'unavailable'); }
+      }
+    },
     refreshSurfaces() {
       for (const item of allItems()) if (item.floating) {
         const scope = surfaceContext({ sender: item.host }, item.target);
@@ -356,7 +440,7 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
         else if (!item.parked && !scope.visible) { item.present = false; item.view.setVisible(false); }
       }
     },
-    dispose() { disposed = true; for (const item of allItems()) destroy(item); changed(); for (const channel of ['plugins:web:call', 'plugins:web:select', 'plugins:web:sync', 'plugins:surface:sync']) ipcMain.removeHandler(channel); for (const ses of sessions.values()) { ses.protocol.unhandle(SCHEME); void ses.clearStorageData(); } }
+    dispose() { disposed = true; for (const item of allItems()) destroy(item); changed(); offSettings?.(); for (const channel of ['plugins:web:call', 'plugins:web:select', 'plugins:web:sync', 'plugins:surface:sync', 'plugins:presentation:sync']) ipcMain.removeHandler(channel); for (const ses of sessions.values()) { ses.protocol.unhandle(SCHEME); void ses.clearStorageData(); } }
   };
 }
 module.exports = { SCHEME, CSP, registerWebUiScheme, boundsFor, themeContext, createWebUi };

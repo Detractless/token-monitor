@@ -33,16 +33,14 @@
         "label": "CPU",
         "value": {
           "$": "sys.cpu",
-          "field": "percent",
-          "format": "percent"
+          "fmt": "percent"
         }
       },
       "compact": {
         "label": "CPU",
         "value": {
           "$": "sys.cpu",
-          "field": "percent",
-          "format": "percent"
+          "fmt": "percent"
         }
       }
     }

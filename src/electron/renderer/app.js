@@ -275,6 +275,7 @@ const pluginPlacementsApi = window.TokenMonitorPluginPlacements;
 // Assigned in the Plugins block below; read lazily by Home, tray and settings.
 let pluginViewHost = null;
 let pluginMainPages = null;
+const pluginPresentations = new Map();
 let pluginPageDesigns = null;
 function pluginPageOptions() { return window.TokenMonitorPluginMainPages?.entries(state.pluginCatalog) || []; }
 let pluginApi = null;
@@ -12822,12 +12823,19 @@ pluginViewHost = pluginViewsApi && pluginBridge ? pluginViewsApi.createPluginVie
   document,
   window,
   t,
+  onMount: mount => pluginPresentations.get(mount.surface)?.track(mount),
   onInteraction: (surface, ref, input, revision) => pluginBridge.interact(surface, ref, input, revision),
   onDemand: (surface, refs) => pluginBridge.setDemand(surface, refs),
   motionAllowed: () => !prefersReducedMotion(),
   motionMode: () => tokenNumberAnimationApi.normalize(state.settings?.tokenNumberAnimation),
   isSurfaceActive: surface => surface !== 'page' || (!isRendererWindowHidden() && !isSettingsPanelOpen() && !state.floatingBubble.collapsed)
 }) : null;
+if (pluginViewHost) for (const surface of ['home', 'page']) {
+  const presentation = window.TokenMonitorPluginPresentationWeb?.create({ document, window, bridge: pluginBridge, surface,
+    stateFor: ref => pluginViewHost.state(surface, ref), reducedMotion: prefersReducedMotion,
+    active: () => !isRendererWindowHidden() && !isSettingsPanelOpen() && !state.floatingBubble.collapsed });
+  if (presentation) pluginPresentations.set(surface, presentation);
+}
 pluginMainPages = pluginViewHost ? window.TokenMonitorPluginMainPages.create({
   document, container: document.getElementById('pluginMainPanel'), host: pluginViewHost, t,
   openWindow: ref => pluginBridge.openPage(ref).catch(error => setStatus(error.message, true))
@@ -12867,6 +12875,11 @@ pluginApi = pluginBridge ? {
     openViewFromTray(page.id);
     document.querySelector('#pluginMainPanel .plugin-main-page:not(.hidden) h2')?.focus({ preventScroll: true });
   },
+  getSettings: id => pluginBridge.getSettings(id),
+  updateSettings: (id, input) => pluginBridge.updateSettings(id, input),
+  syncWebPresentation: input => pluginBridge.syncWebPresentation(input),
+  onWebPresentationReady: callback => pluginBridge.onWebPresentationReady(callback),
+  onWebPresentationFailed: callback => pluginBridge.onWebPresentationFailed(callback),
   catalog: () => pluginBridge.catalog(),
   catalogPreview: (source, id, version) => pluginBridge.catalogPreview(source, id, version),
   addSource: input => pluginBridge.addSource(input),
@@ -12942,6 +12955,7 @@ async function applyPluginSkin(skin) {
 if (pluginBridge) {
   pluginBridge.onViews((payload) => {
     pluginViewHost?.update(payload);
+    pluginPresentations.get(payload?.surface)?.refresh();
     if (payload?.surface === 'tray') void maybeUpdateBarsIcon();
   });
   pluginBridge.onChanged(() => void refreshPluginCatalog());

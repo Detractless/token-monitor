@@ -10,7 +10,13 @@
   const reduceMotion = () => window.TokenMonitorMotionPreference.shouldReduceMotion(appearance.reduceMotion, reduced.matches);
   const scroll = new Map();
   const t = (key, params) => i18n.translate(locale, key, params);
-  const host = window.TokenMonitorPluginViews.createPluginViewHost({ document, window, t, motionAllowed: () => !reduceMotion(), motionMode: () => window.TokenMonitorTokenNumberAnimation.normalize(appearance.tokenNumberAnimation), onInteraction: (_surface, ref, input, revision) => api.interact(ref, input, revision) });
+  let presentation = null;
+  const host = window.TokenMonitorPluginViews.createPluginViewHost({ document, window, t, onMount: mount => presentation?.track(mount), motionAllowed: () => !reduceMotion(), motionMode: () => window.TokenMonitorTokenNumberAnimation.normalize(appearance.tokenNumberAnimation), onInteraction: (_surface, ref, input, revision) => api.interact(ref, input, revision) });
+  presentation = window.TokenMonitorPluginPresentationWeb?.create({ document, window, bridge: api, surface: 'page', stateFor: ref => host.state('page', ref), reducedMotion: reduceMotion });
+  function sizeViewport() {
+    const state = host.state('page', current);
+    content.firstElementChild?.classList.toggle('page-rich-viewport', state?.status === 'ok' && state.webDocuments?.some(doc => !doc.variant || doc.variant === 'full') === true);
+  }
   function fail(reason) { error.hidden = false; error.textContent = t('settings.plugins.actionFailed', { error: reason.message || String(reason) }); }
   function applyMotion() {
     document.documentElement.dataset.reduceMotion = reduceMotion() ? 'on' : 'off';
@@ -47,7 +53,12 @@
       const mount = document.createElement('div'); content.append(mount); host.mount(mount, current, 'page');
       content.scrollTop = scroll.get(current) || 0;
     }
+    sizeViewport();
   }
-  api.onMeta(render); api.onViews(payload => host.update(payload));
+  api.onMeta(render); api.onViews(payload => {
+    host.update(payload);
+    sizeViewport();
+    presentation?.refresh();
+  });
   void api.metadata().then(render).catch(fail);
 })();

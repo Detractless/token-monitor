@@ -57,6 +57,16 @@ function createPluginPages({ BrowserWindow, ipcMain, manager, getSettings, getLo
     return metadata(record);
   });
   return {
+    presentationContext(event, surface, ref) {
+      if (surface !== 'page') return null;
+      let record; try { record = recordFor(event); } catch { return null; }
+      if (ref === null) return { visible: visible(record) };
+      const plugin = catalog(record.id);
+      // Explicit open owns this detached page; pluginMainPages only places it
+      // in the main menu. Keep this callback authoritative for mount/reuse and
+      // revocation, returning hidden (not revoked) so retention can park it.
+      return record.ref === ref && plugin?.status === 'active' && plugin.views.some(view => view.ref === ref && view.surfaces.includes('page')) ? { visible: visible(record) } : null;
+    },
     open(ref) {
       if (disposed) throw new Error('plugin pages are closed');
       const parsed = parseRef(ref);

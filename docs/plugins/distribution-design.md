@@ -1,41 +1,32 @@
 # Plugin pages and distribution contracts
 
-The local runtime now includes independent pages and a managed package/catalog workflow. Public hosting, publishing and registry operation remain separate decisions and are not performed by this implementation.
+Token Monitor supports main-App plugin pages, optional detached windows and managed package/catalog installation. Authors share packages directly or through HTTPS catalogs; publishing a package does not install or approve it for another user.
 
-## Local workflow
+## Installation and page placement
 
-1. Discover and validate the manifest, declared permissions and supported display locations.
+1. The host validates the manifest, declared permissions and supported display locations.
 2. A plugin may declare `surfaces: ["page"]` and optional `layouts.page`. Only explicitly enabled page placements appear in the main app’s view menu. A detached window is an optional action within that page. Main and detached page visibility share demand; neither grants arbitrary DOM or Node access.
-3. Add package preview and confirmation, transactional install/update, one previous version for rollback, and uninstall with explicit data/placement retention. Installed code is disabled until approved; updates are confirmed even if their permissions do not change. Directory import remains useful for authors.
-4. Add searchable Official and Community catalog views, source management, explicit refresh/update checks, integrity and compatibility failures, install/update actions, and offline cache status. No scheduled background updater is enabled by default.
-5. Exercise a complete local flow: discover → preview → install → permission consent → open page → update → rollback → uninstall, plus corrupt/incompatible package and interrupted-operation recovery.
+3. Installation previews the exact package and requires confirmation. Installed code is disabled until approved; updates are confirmed even if their permissions do not change. A previous version is retained for rollback. Uninstall provides explicit data/placement retention choices. Directory import is available for authors.
+4. Official and Community catalog views provide search, source management, refresh/update checks, compatibility and integrity errors, install/update actions and offline cache status. Refresh is explicit; there is no default scheduled updater.
 
 ## Package format
 
-The existing author contract is one JSON manifest and one bundled JavaScript entry, with no external assets or dynamic imports. Use a versioned `.tmplugin` JSON envelope carrying the exact manifest and the entry source, rather than introducing ZIP extraction for arbitrary files this runtime cannot use. The package is data: parsing and validation never execute code. A directory importer produces the same internal representation. Enforce total encoded bytes, a valid contained relative entry name, manifest compatibility and no duplicate/conflicting plugin identity. A package-builder command can generate this artifact from an author directory; it does not publish it.
+A `.tmplugin` file is a version-1 JSON envelope with a required manifest, optional bundled Worker JavaScript `code`, and optional `assets` for the manifest's declared Rich UI files. A declarative plugin needs no code or web assets. The package is data: parsing and validation do not execute it. Directory import and `scripts/build-plugin-package.js` produce the same representation.
 
-This choice follows the current runtime's two-file contract. If images/modules/assets are introduced later, evaluate a standard archive reader and extraction policy before expanding this format. No new dependency is proposed now; existing `semver` handles version comparison and Node crypto handles SHA-256/signatures.
+Packages are limited to 2 MiB encoded, including a 256 KiB manifest, at most 512 KiB Worker code, and at most 1 MiB of decoded assets. Rich assets use canonical base64 values, with at most 64 files and 512 KiB per file. Asset paths must match the manifest and remain package-local; symlink escapes, conflicting names and undeclared files are rejected. See [the Rich UI asset contract](author-ui-options.md#original-pages) for formats and path rules. Worker imports and arbitrary host-file access are not supported. `semver` handles compatibility/version comparison; SHA-256 binds downloaded bytes to the catalog entry.
 
 Managed installs record source id, exact version and SHA-256 beside local transaction metadata. Downloaded bytes must match the selected catalog digest before parsing. Updates stage and validate completely, stop/flush the current owner, preserve a recoverable previous version, atomically switch directories and reload. Failed switching restores the old directory and state; a prepared/committed journal recovers process-interrupted operations at startup. Rollback preserves data but warns that application-specific data migrations cannot be automatically reversed by the host. Uninstall never silently deletes user data.
 
-## Accepted trust policy (2026-10-21)
+## Source trust
 
-The ordinary user flow is browse → inspect source and permissions → install. It does not require copying public keys. The user approved this layered policy. The previous mandatory pinned-key proposal is withdrawn.
+The user flow is browse → inspect source and permissions → install. A public key is optional; source labels and permission approval remain separate.
 
-- App-shipped catalog entries alone get the Official source label. A future maintained community list has its own community/curated label; inclusion does not make its authors official or guarantee safety.
-- An advanced source manager accepts HTTPS catalog URLs, clearly labelled Community / Unreviewed. Optional pinned signatures can strengthen source identity without becoming a mandatory installation step. No outside source is pretrusted or invented here.
+- App-shipped catalog entries alone get the Official source label. Community sources do not make their authors official or guarantee safety.
+- An advanced source manager accepts HTTPS catalog URLs, clearly labelled Community / Unreviewed. Optional pinned signatures can strengthen source identity without becoming a mandatory installation step. Community sources are added explicitly by the user.
 - Every manual install/update confirms the exact source and version. Existing permission grants survive updates; additional permissions or destinations require renewed consent before execution. No automatic update policy is enabled implicitly.
 - Local packages are unverified. SHA-256 detects content mismatch; it does not establish publisher identity or prove safe code. Labels come from host-owned source records, never package claims.
-- The app ships an offline browsable official catalog containing real bundled examples. Community empty states remain honest until a real source is added. Fixtures are labelled test data and are not live marketplace inventory.
-- Public hosting, source enrollment, package/store publication and submission/moderation operations remain outside this local implementation.
-
-## Ecosystem references (checked 2026-10-21)
-
-- [Magpie authoring / publishing](https://usemagpie.ai/docs/plugins#publishing-and-listing): community registry with bundled fallback, npm/Git/folder install, separate unreviewed GitHub-topic discovery. Ordinary users do not manage signing keys.
-- [DeepSeek Harness plugin markets](https://deepseek-harness.github.io/deepseek-harness/en/guide/plugin-market): user-added index URLs, exact npm version or Git commit shown before confirmation; no index source ships by default and index claims are not vetted by the app.
-- [VS Code Marketplace](https://code.visualstudio.com/docs/configure/extensions/extension-marketplace): publisher trust and automatic Marketplace package-signature verification, without manual key entry.
-
-These are distribution precedents, not permission-model equivalence: Token Monitor retains its separate sandbox and broker grants.
+- The app ships an offline browsable official catalog containing real bundled examples. The Community catalog is empty until a source is added.
+- Authors choose where to host packages and catalogs. The App does not provide a submission backend, ratings or moderation service.
 
 ## Persistence and recovery bounds
 

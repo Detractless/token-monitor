@@ -5,6 +5,7 @@
 // its sandboxed code may publish, and what it draws where. Everything is
 // normalised here once, in main, so later code never re-checks raw input.
 
+const { normalizeSettings } = require('./settings');
 const { normalizeIdentityIcon } = require('./identityIcon');
 const { normalizeAppearance } = require('./appearance');
 const { normalizeLocalized, cleanText } = require('./localized');
@@ -234,6 +235,8 @@ function normalizeManifest(raw, { source = 'user' } = {}) {
     return { ok: false, manifest: null, errors };
   }
 
+  let settings;
+  try { settings = normalizeSettings(raw.settings); } catch (error) { return { ok: false, manifest: null, errors: [...errors, error.message] }; }
   let identityIcon;
   try { identityIcon = normalizeIdentityIcon(raw.identityIcon); } catch (error) { return { ok: false, manifest: null, errors: [...errors, error.message] }; }
   return {
@@ -246,6 +249,7 @@ function normalizeManifest(raw, { source = 'user' } = {}) {
       source: source === 'builtin' ? 'builtin' : 'user',
       name,
       identityIcon,
+      settings,
       description: normalizeLocalized(raw.description, 240),
       author: cleanText(raw.author, 80),
       homepage: httpsUrl(raw.homepage),

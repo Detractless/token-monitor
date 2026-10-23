@@ -10,6 +10,9 @@ body.plugin-page { display: flex; flex-direction: column; font-family: var(--ui-
 #pageNavigation button[aria-current="page"] { color: var(--accent); border-color: var(--line-strong); background: var(--glass-soft); }
 .plugin-page button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 #pageContent { overflow: auto; min-height: 0; flex: 1; padding: 4px 0 18px; }
+/* The adapter supplies the author's preferred height. The detached shell owns
+   the available viewport; overflowing Rich content scrolls inside its child. */
+#pageContent > .page-rich-viewport { max-height: 100%; overflow: auto; }
 #pageError { color: var(--red); line-height: 1.5; margin: 0; }
 .plugin-page .pv-placeholder { padding: 28px 0; justify-content: start; }
 .plugin-page .pv-stat-label, .plugin-page .pv-stat-caption { font-size: 12px; }

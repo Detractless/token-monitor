@@ -2,6 +2,15 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+async function pluginSettingsResult(promise) {
+  const result = await promise;
+  if (result?.ok === true) return result.value;
+  // contextBridge strips custom properties from Error instances. A plain
+  // rejection record preserves validation fields in the isolated main world.
+  return Promise.reject({ message: result?.error?.code || 'settings-unavailable',
+    code: result?.error?.code || 'settings-unavailable', fields: result?.error?.fields || {} });
+}
+
 contextBridge.exposeInMainWorld('tokenMonitor', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch) => {
@@ -243,6 +252,15 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
   // Consent and placement run in main; the renderer never sees manifests,
   // plugin code or file paths beyond the plugins folder location.
   plugins: {
+    syncWebPresentation: input => ipcRenderer.invoke('plugins:presentation:sync', input),
+    onWebPresentationReady: callback => {
+      const listener = () => callback(); ipcRenderer.on('plugins:presentation:ready', listener);
+      return () => ipcRenderer.removeListener('plugins:presentation:ready', listener);
+    },
+    onWebPresentationFailed: callback => {
+      const listener = (_event, reason) => callback(reason); ipcRenderer.on('plugins:presentation:failed', listener);
+      return () => ipcRenderer.removeListener('plugins:presentation:failed', listener);
+    },
     webSync: input => ipcRenderer.invoke('plugins:web:sync', input),
     webSelect: (target, ref) => ipcRenderer.invoke('plugins:web:select', target, ref),
     onWebRestore: callback => {
@@ -257,6 +275,8 @@ contextBridge.exposeInMainWorld('tokenMonitor', {
       const listener = (_event, reason) => callback(reason); ipcRenderer.on('plugins:web:failed', listener);
       return () => ipcRenderer.removeListener('plugins:web:failed', listener);
     },
+    getSettings: id => pluginSettingsResult(ipcRenderer.invoke('plugins:getSettings', id)),
+    updateSettings: (id, input) => pluginSettingsResult(ipcRenderer.invoke('plugins:updateSettings', id, input)),
     list: () => ipcRenderer.invoke('plugins:list'),
     setEnabled: (id, enabled) => ipcRenderer.invoke('plugins:setEnabled', { id, enabled }),
     setBackground: (id, enabled) => ipcRenderer.invoke('plugins:setBackground', { id, enabled }),

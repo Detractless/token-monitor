@@ -52,7 +52,7 @@ const CODE = {
   views: [{ id: 'pulse', title: 'Pulse', surfaces: ['home', 'notch'], layout: { type: 'stat', value: { $: '@tpm', fmt: 'compact' } } }]
 };
 
-function setup({ plugins = [SYSTEM, CODE], states = {}, netFetch } = {}) {
+function setup({ plugins = [SYSTEM, CODE], states = {}, netFetch, authorSettings, capabilities } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-plugins-'));
   const builtinDir = path.join(root, 'builtin');
   const userDir = path.join(root, 'user');
@@ -86,6 +86,8 @@ function setup({ plugins = [SYSTEM, CODE], states = {}, netFetch } = {}) {
     dataDir: path.join(root, 'data'),
     bus,
     sandbox,
+    authorSettings,
+    capabilities,
     notify: (note) => notifications.push(note),
     netFetch: netFetch || (async (url, init) => {
       fetches.push([url, init]);
@@ -612,4 +614,66 @@ test('authored page demand starts its Worker without revoking the document and r
   assert.equal(env.running.size, 0);
   env.manager.reload();
   assert.notEqual(env.manager.webDocument('pulse/models').revision, revision);
+});
+
+
+test('committed settings survive failing observers and author DTOs omit schema', t => {
+  const { createPluginSettingsStore } = require('../../src/electron/plugins/settings');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-settings-observers-'));
+  const store = createPluginSettingsStore({ directory });
+  const manifest = { ...CODE, settings: { version: 1, fields: [{ id: 'count', type: 'number', label: 'Count', default: 1 }] } };
+  const env = setup({ plugins: [manifest], authorSettings: store });
+  t.after(() => { env.manager.dispose(); fs.rmSync(directory, { recursive: true, force: true }); fs.rmSync(env.root, { recursive: true, force: true }); });
+  const received = [];
+  env.manager.onAuthorSettings(() => { throw new Error('observer failure'); });
+  env.manager.onAuthorSettings((_id, value) => received.push(value));
+  const result = env.manager.updateAuthorSettings('pulse', { schemaVersion: 1, expectedRevision: 0, patch: { count: 3 } });
+  assert.equal(result.revision, 1); assert.ok(result.schema);
+  assert.equal(env.manager.getAuthorSettings('pulse').values.count, 3);
+  assert.equal(received.length, 1); assert.equal(received[0].schema, undefined);
+  assert.deepEqual(received[0], env.manager.getPublicAuthorSettings('pulse'));
+  const beforeDispose = fs.readFileSync(path.join(directory, 'pulse.json'));
+  env.manager.dispose();
+  assert.throws(() => env.manager.updateAuthorSettings('pulse', {schemaVersion:1,expectedRevision:1,patch:{count:9}}), /unavailable/);
+  assert.deepEqual(fs.readFileSync(path.join(directory, 'pulse.json')), beforeDispose);
+});
+
+test('fallback settings identity follows the actual discovered directory and survives routine reload', t => {
+  const env = setup();
+  t.after(() => { env.manager.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); });
+  fs.renameSync(path.join(env.userDir, 'pulse'), path.join(env.userDir, 'development-folder'));
+  env.manager.reload();
+  const before = env.plugin('pulse').settingsIdentity;
+  const revision = env.plugin('pulse').webRevision;
+  assert.match(before, /^[a-f0-9]{64}$/);
+  env.manager.reload(); assert.equal(env.plugin('pulse').settingsIdentity, before);
+  assert.notEqual(env.plugin('pulse').webRevision, revision);
+  env.manager.setEnabled('pulse', true); assert.equal(env.plugin('pulse').settingsIdentity, before);
+  fs.writeFileSync(path.join(env.userDir, 'development-folder', 'manifest.json'), JSON.stringify({ ...CODE, version: '1.0.1' }));
+  env.manager.reload(); assert.notEqual(env.plugin('pulse').settingsIdentity, before);
+});
+
+test('Worker business subscriptions release on idle and re-register after resume; late queries never succeed', async t => {
+  const { createPluginCapabilities } = require('../../src/electron/plugins/capabilities');
+  const { createBusinessDataService } = require('../../src/electron/plugins/businessData');
+  let finish;
+  const business = createBusinessDataService({ loadHistory: () => new Promise(resolve => { finish = resolve; }) });
+  business.publish({});
+  const capabilities = createPluginCapabilities({ businessData: business });
+  const env = setup({ plugins: [{ ...CODE, permissions: ['tm.data.history'] }], capabilities });
+  t.after(() => { env.manager.dispose(); capabilities.dispose(); business.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); });
+  env.manager.setEnabled('pulse', true); env.manager.setSurfaceDemand('notch', ['pulse/pulse']); env.manager.handleMessage('pulse', { type: 'ready' });
+  const query = { version: 1, resource: 'history' };
+  env.manager.handleMessage('pulse', { type: 'call', id: 100, op: 'data.query', args: { query } });
+  await new Promise(resolve => setImmediate(resolve)); assert.equal(typeof finish, 'function');
+  env.manager.setSurfaceDemand('notch', []);
+  env.manager.setSurfaceDemand('notch', ['pulse/pulse']);
+  finish({ daily: [], monthly: [], summary: {} }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(env.sent.some(([, value]) => value.type === 'result' && value.id === 100 && value.ok), false);
+  env.manager.handleMessage('pulse', { type: 'call', id: 101, op: 'data.subscribe', args: { id: 'history', query } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(env.sent.some(([, value]) => value.type === 'business-data' && value.id === 'history'));
+  env.manager.setSurfaceDemand('notch', []); const count = env.sent.length;
+  business.publish({}); await new Promise(resolve => setTimeout(resolve, 120));
+  assert.equal(env.sent.slice(count).some(([, value]) => value.type === 'business-data'), false);
 });

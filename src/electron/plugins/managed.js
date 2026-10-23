@@ -22,7 +22,7 @@ function atomicJson(file, value, limit = Infinity) {
 }
 // One synchronous transaction at a time. A prepared journal always rolls back;
 // only a persisted committed journal permits removal of the recovery copies.
-function createManagedPlugins({ root, userDir, dataDir, manager, getSettings, saveSettings, getLocale = () => 'en', now = Date.now, fault = () => {} }) {
+function createManagedPlugins({ root, userDir, dataDir, settingsDir = null, manager, getSettings, saveSettings, getLocale = () => 'en', now = Date.now, fault = () => {} }) {
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   fs.mkdirSync(userDir, { recursive: true, mode: 0o700 });
   const registryFile = path.join(root, 'installed.json');
@@ -58,6 +58,8 @@ function createManagedPlugins({ root, userDir, dataDir, manager, getSettings, sa
       } else if (!j.hadTarget && !fs.existsSync(stage) && j.operation !== 'uninstall') fs.rmSync(target, { recursive: true, force: true });
       const dataBackup = path.join(txDir, 'data.json');
       if (fs.existsSync(dataBackup)) { fs.mkdirSync(dataDir, { recursive: true }); fs.renameSync(dataBackup, path.join(dataDir, `${j.id}.json`)); }
+      const settingsBackup = path.join(txDir, 'author-settings.json');
+      if (settingsDir && fs.existsSync(settingsBackup)) { fs.mkdirSync(settingsDir, { recursive: true }); fs.renameSync(settingsBackup, path.join(settingsDir, `${j.id}.json`)); }
       const previous = path.join(historyDir, `${j.id}.tmplugin`), previousBackup = path.join(txDir, 'previous.tmplugin');
       if (j.hadPrevious) fs.copyFileSync(previousBackup, previous);
       else fs.rmSync(previous, { force: true });
@@ -136,6 +138,7 @@ function createManagedPlugins({ root, userDir, dataDir, manager, getSettings, sa
         delete patch.pluginStates[id];
         if (!options.keepPlacements) Object.assign(patch, removePluginPlacements(getSettings(), id));
         if (!options.keepData && fs.existsSync(path.join(dataDir, `${id}.json`))) fs.renameSync(path.join(dataDir, `${id}.json`), path.join(txDir, 'data.json'));
+        if (!options.keepData && settingsDir && fs.existsSync(path.join(settingsDir, `${id}.json`))) fs.renameSync(path.join(settingsDir, `${id}.json`), path.join(txDir, 'author-settings.json'));
         fs.rmSync(previous, { force: true });
       } else {
         if (current) fs.writeFileSync(previous, current.bytes, { mode: 0o600 });
