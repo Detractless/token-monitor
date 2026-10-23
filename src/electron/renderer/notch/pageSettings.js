@@ -100,7 +100,7 @@
         void persistOrder(container, ids, entry.id);
       });
       chip.setAttribute('aria-pressed', String(entry.checked));
-      if (entry.title !== entry.label) { chip.title = entry.title; chip.setAttribute('aria-label', entry.title); }
+      if (entry.title !== entry.label) { chip.setAttribute('aria-label', entry.title); }
       const icon = entry.icon?.kind === 'plugin' && typeof pluginIcon === 'function' ? pluginIcon(entry.icon.name)
         : entry.icon?.kind === 'builtin' ? document.createElement('span') : null;
       if (entry.icon?.kind === 'builtin') {

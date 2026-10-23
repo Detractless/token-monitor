@@ -32,6 +32,7 @@ class Element {
   remove() { if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; }
   replaceChildren(...nodes) { this.children.forEach(node => { node.parent = null; }); this.children = []; this.append(...nodes); }
   setAttribute(key, value) { this.attributes[key] = String(value); if (key === 'class') this.className = value; }
+  getAttribute(key) { return this.attributes[key]; }
   removeAttribute(key) { delete this.attributes[key]; }
   addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); }
   fire(name, event = {}) { for (const fn of this.listeners[name] || []) fn(event); }

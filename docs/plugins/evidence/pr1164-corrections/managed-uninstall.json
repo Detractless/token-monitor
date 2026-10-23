@@ -1,7 +1,0 @@
-{
-  "managedInstallNoDemandSamples": 0,
-  "twoPluginsSharedSamplesIn10s": 6,
-  "firstUninstallRetainsOther": true,
-  "lastUninstallStopsSampling": true,
-  "remainingSources": 0
-}

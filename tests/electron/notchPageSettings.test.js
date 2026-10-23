@@ -89,7 +89,7 @@ test('chips toggle through click, restore state on failure and keep focus', asyn
   assert.equal(chip('home').children[1].textContent, 'Home');
   assert.equal(chip('home').attributes['aria-pressed'], 'true');
   assert.equal(chip('plugin:pulse/main').title, undefined, 'label and title agree, so no tooltip');
-  assert.equal(chip('plugin:pulse/mini').title, 'Token Pulse · Mini');
+  assert.equal(chip('plugin:pulse/mini').title, undefined, 'full view name is accessible without a native tooltip');
   assert.equal(chip('plugin:pulse/mini').attributes['aria-label'], 'Token Pulse · Mini');
   assert.ok(chip('plugin:pulse/mini').querySelector('.pv-icon'), 'plugin chips paint the plugin icon');
   assert.equal(chip('plugin:idle/main'), undefined, 'inactive plugins have no page chip');

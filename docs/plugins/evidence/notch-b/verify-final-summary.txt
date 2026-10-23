@@ -1,9 +1,0 @@
-✔ the Worker matches the Node hub on tokens and currencies (0.629083ms)
-ℹ tests 7728
-ℹ suites 0
-ℹ pass 7720
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 8
-ℹ todo 0
-ℹ duration_ms 38649.438292

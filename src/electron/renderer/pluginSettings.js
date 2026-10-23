@@ -417,7 +417,7 @@
           chip.type = 'button';
           chip.dataset.controlKey = `place/${view.ref}/${surface}`;
           chip.setAttribute('aria-pressed', String(placed));
-          chip.title = t(placed ? 'settings.plugins.unplace' : 'settings.plugins.place', { view: view.title, surface: t(`settings.plugins.surface.${surface}`) });
+          chip.setAttribute('aria-label', t(placed ? 'settings.plugins.unplace' : 'settings.plugins.place', { view: view.title, surface: t(`settings.plugins.surface.${surface}`) }));
           chip.addEventListener('click', () => void run(async () => {
             const next = await api.place(view.ref, surface, !placed);
             onPlaced(surface, view.ref, !placed);
@@ -511,8 +511,7 @@
           const tooltip = count.querySelector('[role="tooltip"]');
           if (tooltip) { tooltip.id = `plugin-placements-${++menuId}`; count.setAttribute('aria-describedby', tooltip.id); }
         } else {
-          count.title = details.map(entry => entry.full).join(', ');
-          count.setAttribute('aria-description', count.title);
+          count.setAttribute('aria-description', details.map(entry => entry.full).join(', '));
         }
         count.setAttribute('aria-label', `${t('settings.plugins.views')}: ${t('plugins.ui.locationCount', { count: surfaces.length })}`);
         summary.append(count); footer.append(summary);
@@ -584,7 +583,7 @@
           for (const skin of plugin.skins) {
             const chip = button('', () => onApplySkin(skin), 'theme-preset-chip plugin-skin-chip');
             const dot = el(document, 'span', 'theme-preset-dot'); dot.style.background = skin.colors.accent || skin.colors.chart || 'currentColor';
-            chip.append(dot, el(document, 'span', '', skin.name)); chip.title = t('settings.plugins.applySkin', { name: skin.name }); skins.append(chip);
+            chip.append(dot, el(document, 'span', '', skin.name)); chip.setAttribute('aria-label', t('settings.plugins.applySkin', { name: skin.name })); skins.append(chip);
           }
           wrap.append(detailSection(t('settings.plugins.skins'), skins));
         }
@@ -594,7 +593,7 @@
           for (const page of pages) {
             const open = button(t('plugins.page.open', { name: page.title }), () => void run(async () => { await api.openPage(page.ref); return null; }));
             open.disabled = busy || !page.placements?.page;
-            if (!page.placements?.page) open.title = t('plugins.page.enableFirst');
+            if (!page.placements?.page) open.setAttribute('aria-description', t('plugins.page.enableFirst'));
             actions.append(open);
           }
           wrap.append(detailSection(t('plugins.ui.pages'), el(document, 'p', 'settings-note', t('plugins.ui.pagesNote')), actions));
@@ -709,7 +708,6 @@
       if (!list.enabled) {
         count.append(document.createTextNode(' · '), el(document, 'span', 'plugin-paused', t('plugins.ui.pausedShort')));
         count.setAttribute('aria-label', `${countText} · ${t('plugins.ui.paused')}`);
-        count.title = `${countText} · ${t('plugins.ui.paused')}`;
       }
       actions.append(count,
         button(t('plugins.package.import'), () => importPackage('file'), 'plugin-inline-action'),
