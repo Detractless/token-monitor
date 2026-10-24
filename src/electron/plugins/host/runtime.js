@@ -15,8 +15,11 @@
   let tokens = 200;
   let tokenAt = performance.now();
   let dropped = 0;
+  const requests = new Set();
+  const capabilityOps = new Set(['data.query', 'data.subscribe', 'data.unsubscribe', 'settings.get', 'settings.update', 'settings.reset']);
 
   function stop() {
+    requests.clear();
     if (worker) worker.terminate();
     worker = null;
     if (workerUrl) URL.revokeObjectURL(workerUrl);
@@ -54,7 +57,15 @@
       const at = performance.now();
       tokens = Math.min(200, tokens + (at - tokenAt) / 10);
       tokenAt = at;
-      if (tokens < 1) {
+      const valid = window.TokenMonitorPluginMessage.validMessage(data);
+      // This relay validates the wire envelope; main validates query/schema and
+      // authority and owns byte/work scheduling. Only matched replies free slots.
+      const request = valid && data.type === 'call' && capabilityOps.has(data.op);
+      if (request && (requests.size >= 32 || requests.has(data.id))) {
+        fail('protocol-rate-limit', 'worker capability request limit');
+        return;
+      }
+      if (!request && tokens < 1) {
         // Losing a request/completion strands promises or the tick scheduler.
         // Fail this worker once; main applies its bounded restart/circuit policy.
         if (['ready', 'tick-done', 'interaction-done', 'call'].includes(data.type)) {
@@ -64,12 +75,13 @@
         if (++dropped >= 400) fail('flooding', 'worker message budget exceeded');
         return;
       }
-      tokens -= 1;
-      if (!window.TokenMonitorPluginMessage.validMessage(data)) {
+      if (!request) tokens -= 1;
+      if (!valid) {
         if (data.type === 'call' && Number.isSafeInteger(data.id)) worker.postMessage({ type: 'result', id: data.id, ok: false, error: 'invalid message or message quota exceeded' });
         bridge.send({ type: 'dropped', reason: 'invalid-message', kind: String(data.type).slice(0, 32) });
         return;
       }
+      if (request) requests.add(data.id);
       bridge.send(data);
     };
     worker.onmessageerror = () => bridge.send({ type: 'dropped', reason: 'unserializable' });
@@ -89,6 +101,7 @@
       stop();
       return;
     }
+    if (message.type === 'result') requests.delete(message.id);
     if (worker) worker.postMessage(message);
   });
 

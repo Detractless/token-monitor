@@ -18,7 +18,7 @@ const placements = require('../../shared/plugins/placements');
 const { createSupervisor, createRateLimiter } = require('./supervisor');
 const broker = require('./broker');
 const { publicSettings } = require('./settings');
-const { capabilityError } = require('./capabilities');
+const { capabilityError, createCapabilityLane, isCapabilityRequest } = require('./capabilities');
 const { validMessage } = require('./host/message');
 const { findAction, validateInteraction } = require('../../shared/plugins/interactions');
 
@@ -173,7 +173,7 @@ function createPluginManager({
       webRevision: ++interactionRevision, state: 'stopped', mode: null, seq: 0, revision: ++interactionRevision, interactionSeq: 0, pendingInteractions: new Map(), interactionLimit: createRateLimiter({ capacity: 40, perSecond: 30, now }), inTick: false, tickDeadline: null, tickTimer: null, idleTimer: null,
       bootTimer: null, restartTimer: null, subscriptions: new Set(), metrics: null,
       limiter: createRateLimiter({ ...MESSAGE_RATE, now }), notifyLimiter: createRateLimiter({ capacity: 3, perSecond: 1 / 60, now }),
-      netLimiter: createRateLimiter({ capacity: 10, perSecond: 0.5, now }), requests: new Set(), generation: 0, dropped: 0, lastError: ''
+      capabilityLane: null, netLimiter: createRateLimiter({ capacity: 10, perSecond: 0.5, now }), requests: new Set(), generation: 0, dropped: 0, lastError: ''
     };
   }
 
@@ -355,6 +355,8 @@ function createPluginManager({
       addLog(plugin, 'error', `start failed: ${error.message}`);
       return;
     }
+    runtime.capabilityLane?.close();
+    runtime.capabilityLane = createCapabilityLane({ now, setTimer, clearTimer });
     runtime.limiter = createRateLimiter({ ...MESSAGE_RATE, now });
     runtime.dropped = 0;
     runtime.state = 'starting';
@@ -374,6 +376,8 @@ function createPluginManager({
   }
 
   function releaseWorkerData(plugin) {
+    plugin.runtime.capabilityLane?.close();
+    plugin.runtime.capabilityLane = null;
     const owner = dataOwners.get(plugin.id);
     if (owner) capabilities?.release(owner);
     dataOwners.delete(plugin.id);
@@ -443,6 +447,7 @@ function createPluginManager({
     }
     const changed = runtime.mode !== mode;
     runtime.mode = mode;
+    runtime.capabilityLane ??= createCapabilityLane({ now, setTimer, clearTimer });
     if (!sandbox?.isRunning(plugin.id)) {
       startWorker(plugin);
       return;
@@ -540,17 +545,21 @@ function createPluginManager({
     const args = message.args && typeof message.args === 'object' ? message.args : {};
     const grant = grantOf(plugin);
     try {
-      if (!runtime.mode) throw new Error('plugin is idle');
+      if (!runtime.mode || !['starting', 'running'].includes(runtime.state) || !sandbox?.isRunning(plugin.id)) throw new Error('plugin is idle');
       if (message.op.startsWith('data.') || message.op.startsWith('settings.')) {
+        if (!isCapabilityRequest(message.op, args)) throw new Error('invalid capability request');
         if (!capabilities) throw new Error('capability unavailable');
         let owner = dataOwners.get(plugin.id);
         if (!owner) { owner = { pluginId: plugin.id, generation }; dataOwners.set(plugin.id, owner); }
-        const valid = () => plugins.get(plugin.id) === plugin && runtime.generation === generation && runtime.mode && dataOwners.get(plugin.id) === owner && isActive(plugin);
-        const value = await capabilities.call(owner, message.op, args, {
-          auth: () => ({ ...dataAuth(plugin), revision: generation, active: Boolean(valid()) }),
-          settings: authorSettingsAccess(plugin, true),
-          send: event => { if (valid()) sandbox?.send(plugin.id, { type: 'business-data', ...event }); }
-        });
+        const valid = () => plugins.get(plugin.id) === plugin && runtime.generation === generation && runtime.mode && ['starting', 'running'].includes(runtime.state) && sandbox?.isRunning(plugin.id) && dataOwners.get(plugin.id) === owner && isActive(plugin);
+        const value = await runtime.capabilityLane.run(message.op, args, () => {
+          if (!valid()) throw new Error('capability revoked');
+          return capabilities.call(owner, message.op, args, {
+            auth: () => ({ ...dataAuth(plugin), revision: generation, active: Boolean(valid()) }),
+            settings: authorSettingsAccess(plugin, true),
+            send: event => { if (valid()) sandbox?.send(plugin.id, { type: 'business-data', ...event }); }
+          });
+        }, id);
         if (!valid()) throw new Error('capability revoked');
         return reply(plugin, id, { ok: true, value });
       }
@@ -583,6 +592,7 @@ function createPluginManager({
       }
       throw new Error(`unknown operation ${String(message.op).slice(0, 40)}`);
     } catch (error) {
+      if (error.code === 'request-limit') { sandbox?.kill(plugin.id, 'protocol-rate-limit'); return; }
       reply(plugin, id, { ok: false, error: capabilityError(error).message, code: capabilityError(error).code, fields: capabilityError(error).fields });
     }
   }
@@ -592,6 +602,7 @@ function createPluginManager({
     if (!plugin?.manifest || !isActive(plugin) || !message || typeof message !== 'object') return;
     const runtime = plugin.runtime;
     if (!validMessage(message, { trusted: true })) {
+      if (!runtime.limiter.take()) { sandbox?.kill(pluginId, 'protocol-rate-limit'); return; }
       addLog(plugin, 'warn', 'invalid plugin message ignored');
       if (message.type === 'call' && Number.isSafeInteger(message.id)) sandbox?.send(pluginId, { type: 'result', id: message.id, ok: false, error: 'invalid message or message quota exceeded' });
       return;
@@ -609,7 +620,8 @@ function createPluginManager({
       supervisor.heartbeat(pluginId);
       return;
     }
-    if (!runtime.limiter.take()) {
+    const request = message.type === 'call' && isCapabilityRequest(message.op, message.args);
+    if (!request && !runtime.limiter.take()) {
       if (['ready', 'tick-done', 'interaction-done', 'call'].includes(message.type)) {
         sandbox?.kill(pluginId, 'protocol-rate-limit');
         return;

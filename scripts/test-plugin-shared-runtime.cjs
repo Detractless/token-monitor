@@ -43,6 +43,79 @@ const snapshotRevision = summary => Number(/snapshot (\d+)/.exec(summary)?.[1]);
 
 // Open through the real management IPC: pages.js owns the native window,
 // pagePreload/page.js own rendering, and the production adapter supplies bounds.
+async function largeSessionAcceptance(stats) {
+  const sessions = Object.fromEntries(Array.from({ length: 30000 }, (_, index) => [`codex:large-${index}`, {
+    client: 'codex', sessionId: `large-${index}`, title: `Large session ${index}`, totalTokens: index + 1,
+    costUsd: index / 10000, models: { model: index + 1 }, modelCosts: { model: index / 10000 }
+  }]));
+  const large = { ...stats, periods: { ...stats.periods, today: { ...stats.periods.today, sessions } } };
+  runtime.publishStats(large);
+  await author("document.getElementById('resource').value='sessions';document.getElementById('resource').dispatchEvent(new Event('change'));true;");
+  await until(() => author("document.getElementById('summary').textContent.includes('30000') || document.getElementById('summary').textContent.includes('budgetExceeded')"));
+  await author('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+  fs.writeFileSync(path.join(scratch, 'large-sessions-first-child.png'), (await child().capturePage()).toPNG());
+  const q = { version: 1, resource: 'sessions', sort: { field: 'totalTokens', direction: 'asc' }, page: { limit: 500 } };
+  let result = await author(`tm.data.query(${JSON.stringify(q)})`);
+  const retries = [], deadline = Date.now() + 10000;
+  while (result.availability === 'rateLimited' && Date.now() < deadline) {
+    retries.push(result.retryAfterMs);
+    await delay(Math.max(1, Math.min(result.retryAfterMs, deadline - Date.now())));
+    result = await author(`tm.data.query(${JSON.stringify(q)})`);
+  }
+  fs.writeFileSync(path.join(scratch, 'large-sessions-rate-retries.json'), JSON.stringify(retries));
+  fs.writeFileSync(path.join(scratch, 'large-sessions-first.json'), JSON.stringify(result, null, 2));
+  check('real Rich bridge admits 30000 session records', result.availability === 'available' && result.aggregateCoverage.totalRows === 30000);
+  const ids = new Set(); let cursor, expected = 1, pages = 0, row = result;
+  do {
+    checkPayload(row);
+    for (const item of row.rows) {
+      assert.equal(item.totalTokens, expected++);
+      assert.ok(!ids.has(item.id), 'duplicate session in traversal'); ids.add(item.id);
+    }
+    pages++; cursor = row.pageInfo.nextCursor;
+    await author('tm.settings.get()');
+    if (cursor) row = await author(`tm.data.query(${JSON.stringify({ ...q, page: { limit: 500, cursor } })})`);
+  } while (cursor);
+  check('real Rich traversal returns every session once in stable order', ids.size === 30000 && expected === 30001);
+  check('large session pages remain byte bounded', pages > 21);
+  const visibleBefore = await author("document.getElementById('rows').textContent");
+  await author("document.getElementById('next').click();true;");
+  await until(async () => (await author("document.getElementById('rows').textContent")) !== visibleBefore);
+  fs.writeFileSync(path.join(scratch, 'large-sessions-next-child.png'), (await child().capturePage()).toPNG());
+  fs.writeFileSync(path.join(scratch, 'large-sessions-traversal.json'), JSON.stringify({ rows: ids.size, pages, expectedRows: 30000 }));
+  // Valid smallest pages plus unrelated capability traffic must finish within
+  // the original snapshot lifetime, without author-side pacing.
+  const small = { ...large, periods: { ...large.periods, today: {
+    ...large.periods.today, sessions: Object.fromEntries(Object.entries(sessions).slice(0, 2000))
+  } } };
+  runtime.publishStats(small);
+  const tinyQuery = { ...q, page: { limit: 1 } };
+  let tiny = await author(`tm.data.query(${JSON.stringify(tinyQuery)})`);
+  const tinyDeadline = Date.now() + 10000;
+  while (tiny.availability === 'rateLimited' && Date.now() < tinyDeadline) {
+    assert.ok(Number.isInteger(tiny.retryAfterMs) && tiny.retryAfterMs > 0);
+    await delay(Math.min(tiny.retryAfterMs, tinyDeadline - Date.now()));
+    tiny = await author(`tm.data.query(${JSON.stringify(tinyQuery)})`);
+  }
+  const started = Date.now(), tinyIds = new Set(); let tinyExpected = 1;
+  for (;;) {
+    checkPayload(tiny);
+    assert.equal(tiny.rows.length, 1);
+    assert.equal(tiny.rows[0].totalTokens, tinyExpected++);
+    assert.ok(!tinyIds.has(tiny.rows[0].id)); tinyIds.add(tiny.rows[0].id);
+    await author('tm.settings.get()');
+    const next = tiny.pageInfo.nextCursor;
+    if (!next) break;
+    tiny = await author(`tm.data.query(${JSON.stringify({ ...tinyQuery, page: { limit: 1, cursor: next } })})`);
+  }
+  check('real Rich limit-1 mixed traffic completes 2000 rows without expiry', tinyIds.size === 2000);
+  fs.writeFileSync(path.join(scratch, 'small-page-mixed-traversal.json'), JSON.stringify({ rows: tinyIds.size, elapsedMs: Date.now() - started }));
+  function checkPayload(value) {
+    assert.equal(value.availability, 'available');
+    assert.ok(Buffer.byteLength(JSON.stringify(value)) <= 56 * 1024);
+  }
+}
+
 async function detachedAcceptance(settings) {
   check('detached explicit open starts with no main-menu placement', settings.pluginMainPages.length === 0);
   await host("tokenMonitor.plugins.openPage('business-studio/overview')");
@@ -61,7 +134,7 @@ async function detachedAcceptance(settings) {
   })()`);
   await until(() => detached.isVisible());
   await until(() => run("document.getElementById('pageContent').firstElementChild?.style.height==='460px'"));
-  await delay(700);
+  await until(async () => Boolean((await geometry()).accepted));
   const firstGeometry = await geometry();
   fs.writeFileSync(path.join(scratch, 'detached-opening.json'), JSON.stringify({ windowSize: detached.getSize(), ...firstGeometry }, null, 2));
   fs.writeFileSync(path.join(scratch, 'detached-opening-host.png'), (await detached.capturePage()).toPNG());
@@ -296,6 +369,7 @@ async function main() {
   await delay(120);
   fs.writeFileSync(path.join(scratch, 'after-content.png'), (await child().capturePage()).toPNG());
   fs.writeFileSync(path.join(scratch, 'after.png'), (await win.capturePage()).toPNG());
+  await largeSessionAcceptance(stats);
   runtime.manager.setEnabled('business-studio', false);
   await until(() => first.isDestroyed());
   check('disable revokes live Rich document', first.isDestroyed());

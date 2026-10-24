@@ -22,10 +22,21 @@ function fixture(count = 3) {
 function setup(t, options, runtime = {}) {
   let calls = 0;
   const module = { exports: {} };
+  let lazyHelper;
+  if (runtime.performance) {
+    // Use the same work-clock seam for source scans, indexing and service work.
+    const lazyModule = { exports: {} };
+    vm.runInNewContext(fs.readFileSync(path.join(path.dirname(servicePath), 'lazySessions.js'), 'utf8'), {
+      module: lazyModule, exports: lazyModule.exports,
+      require: name => name === 'node:perf_hooks' ? { performance: runtime.performance } : serviceRequire(name)
+    });
+    lazyHelper = lazyModule.exports;
+  }
   vm.runInNewContext(source, { module, exports: module.exports, require(name) {
+    if (name === './lazySessions' && lazyHelper) return lazyHelper;
     if (name === 'node:perf_hooks' && runtime.performance) return { performance: runtime.performance };
     return name === '../../shared/plugins/businessData' ? { ...shared, projectResource(...args) { calls++; return (runtime.projectResource || shared.projectResource)(...args); } } : serviceRequire(name);
-  }, Buffer, setTimeout: runtime.setTimeout || setTimeout, clearTimeout: runtime.clearTimeout || clearTimeout });
+  }, Buffer, AbortController, setTimeout: runtime.setTimeout || setTimeout, clearTimeout: runtime.clearTimeout || clearTimeout });
   const service = module.exports.createBusinessDataService(options);
   t.after(() => service.dispose());
   return { service, calls: () => calls };
@@ -174,13 +185,13 @@ test('another plugin cannot FIFO-evict an admitted cursor with many resources an
   assert.equal((await service.query(next(query, first), auth('quiet'))).availability, 'available');
 });
 
-test('oversized collections reject before projection and cache the explicit failure across searches', async t => {
+test('large sessions build query indices without eager projections across searches', async t => {
   const { service, calls } = setup(t);
   service.publish(fixture(5001));
   for (const search of ['one', 'two', 'three']) {
     const result = await service.query(q('sessions', { filter: { search } }), auth());
-    assert.equal(result.availability, 'budgetExceeded');
-    assert.equal(result.aggregateCoverage.totalRows, null);
+    assert.equal(result.availability, 'available');
+    assert.equal(result.aggregateCoverage.totalRows, 0);
   }
   assert.equal(calls(), 0);
 });
@@ -188,7 +199,7 @@ test('oversized collections reject before projection and cache the explicit fail
 test('all-time preflight includes base data when extras only provide metadata', async t => {
   const { service, calls } = setup(t);
   service.publish(fixture(5001), { allTime: { updatedAt: 'metadata' } });
-  assert.equal((await service.query(q('sessions', { period: 'allTime' }), auth())).availability, 'budgetExceeded');
+  assert.equal((await service.query(q('sessions', { period: 'allTime' }), auth())).aggregateCoverage.totalRows, 5001);
   assert.equal(calls(), 0);
 });
 
@@ -529,4 +540,23 @@ test('subscription forecast preflight bounds all account candidates before scope
   assert.equal(calls(), 0, 'scope cannot hide costly matching input from the preflight budget');
   const restricted = { ...auth('without-limits'), permissions: ['tm.data.subscriptions'] };
   assert.equal((await service.query(q('subscriptions'), restricted)).availability, 'available', 'without limits grant no account matching work is needed');
+});
+
+
+test('lazy scan and page work use the deterministic budget clock; exact cursor survives debt and refill admits new work', async t => {
+  let wall = 1000, reads = 0, cost = true;
+  const runtime = { performance: { now: () => cost ? Math.floor(++reads / 128) * 40 : Math.floor(reads / 128) * 40 } };
+  const { service } = setup(t, { now: () => wall }, runtime);
+  service.publish(fixture(5001));
+  const query = q('sessions', { page: { limit: 20 } });
+  const first = await service.query(query, auth());
+  assert.equal(first.availability, 'available');
+  cost = false;
+  const denied = await service.query(q('sessions', { filter: { search: 'other' } }), auth());
+  assert.equal(denied.availability, 'rateLimited');
+  assert.ok(Number.isInteger(denied.retryAfterMs) && denied.retryAfterMs > 0);
+  assert.equal((await service.query(next(query, first), auth())).availability, 'available');
+  wall += denied.retryAfterMs;
+  const recovered = await service.query(q('sessions', { filter: { search: 'other' } }), auth());
+  assert.equal(recovered.availability, 'available'); assert.equal(recovered.aggregateCoverage.totalRows, 0);
 });

@@ -66,7 +66,7 @@ function realFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-detached-pages-'));
   const userDir = path.join(root, 'plugins');
   const manifest = {
-    id: 'demo', name: 'Demo', version: '1.0.0', tmApi: 1, permissions: ['ui.web'],
+    id: 'demo', name: 'Demo', version: '1.0.0', tmApi: 1, permissions: ['ui.web', 'tm.data.sessions', 'tm.data.identities'],
     views: ['first', 'second', 'home'].map(id => ({ id, title: id, surfaces: [id === 'home' ? 'home' : 'page'], layout: { type: 'text', text: 'Fallback' } })),
     webUi: { version: 1, assets: ['body.html'], documents: ['first', 'second'].map(view => ({
       id: `${view}-rich`, view, target: 'page', slot: 'replace', entry: 'body.html', retainMs: 'until-evicted'
@@ -116,7 +116,7 @@ test('real manager detached authority follows explicit open independently of mai
 
 // Only Electron primitives are faked; admission, package loading, retention and
 // revocation use the production pages + manager + Web UI controllers.
-function richController(f) {
+function richController(f, documentCapabilities = {}) {
   let nextId = 100;
   class View {
     constructor() {
@@ -135,7 +135,7 @@ function richController(f) {
     webRequest: { onBeforeRequest() {} }, protocol: { handle() {}, unhandle() {} }, clearStorageData: async () => {} });
   return createWebUi({ electron: { BrowserWindow: f.Window, WebContentsView: View, ipcMain: f.ipcMain,
     session: { fromPartition: () => session }, app: { getAppMetrics: () => [{ pid: 1, memory: { workingSetSize: 1 } }] } },
-  manager: f.manager, bus: f.bus, isMainSender: () => false,
+  manager: f.manager, bus: f.bus, documentCapabilities, isMainSender: () => false,
   presentationContext: f.pages.presentationContext, file: path.join(f.root, 'selections.json') });
 }
 
@@ -180,4 +180,94 @@ test('real manager detached Rich mounts, retains while hidden and destroys revok
   f.pages.open('demo/first'); const third = ready();
   win.hide(); await third.lifecycle;
   win.destroy(); assert.equal(third.dead, true); assert.deepEqual(webUi.cached(), []);
+});
+
+function pagingRich(t, { count = 2000, settingsGet = () => ({ values: { count: 1 } }), query } = {}) {
+  const { createPluginCapabilities } = require('../../src/electron/plugins/capabilities');
+  const { createBusinessDataService } = require('../../src/electron/plugins/businessData');
+  const f = realFixture(t);
+  const business = createBusinessDataService();
+  const stats = { periods: { today: { sessions: Object.fromEntries(Array.from({ length: count }, (_, i) => [i, { sessionId: String(i), client: 'codex', totalTokens: i, title: `Row ${i}` }])) } } };
+  business.publish(stats);
+  let queries = 0;
+  const api = createPluginCapabilities({ businessData: { ...business, query(...args) { queries++; return query ? query(...args) : business.query(...args); } } });
+  const webUi = richController(f, {
+    call(item, op, args) { return api.call(item.owner, op, args, {
+      auth: () => ({ ...f.manager.webDataAuth(item.ref), revision: item.revision, active: !item.dead && !item.parked && !item.resuming && !item.awaitingResume }),
+      settings: { get: settingsGet }, send() {}
+    }); }, release: owner => api.release(owner)
+  });
+  t.after(() => { webUi.dispose(); api.dispose(); business.dispose(); });
+  f.pages.open('demo/first'); const win = f.windows[0]; win.emit('ready-to-show');
+  const event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+  const input = { surface: 'page', visible: true, entries: [{ instance: 'body', viewRef: 'demo/first', ref: 'demo/first-rich', rect: { x: 10, y: 10, width: 400, height: 300 } }] };
+  f.handlers.get('plugins:presentation:sync')(event, input);
+  const item = webUi.presentations()[0]; assert.ok(item);
+  const call = (op, args) => f.handlers.get('plugins:web:call')({ sender: item.view.webContents, senderFrame: item.view.webContents.mainFrame }, op, args);
+  item.view.webContents.emit('did-finish-load'); call('present');
+  return { ...f, webUi, item, win, call, business, stats, queries: () => queries };
+}
+for (const limit of [1, 100]) test(`Rich production controller traverses 2000 rows at limit ${limit} mixed with settings`, async t => {
+  const f = pagingRich(t), start = Date.now(), rows = [];
+  let cursor, pages = 0;
+  do {
+    const reply = await f.call('data.query', { query: { version: 1, resource: 'sessions', sort: { field: 'totalTokens' }, page: { limit, ...(cursor ? { cursor } : {}) } } });
+    assert.equal(reply.ok, true, JSON.stringify(reply));
+    const result = reply.value; assert.equal(result.availability, 'available');
+    assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 56 * 1024);
+    rows.push(...result.rows); cursor = result.pageInfo.nextCursor; pages++;
+    const settings = await f.call('settings.get', {}); assert.equal(settings.ok, true); assert.equal(settings.value.values.count, 1);
+  } while (cursor);
+  assert.equal(rows.length, 2000); assert.equal(new Set(rows.map(row => row.id)).size, 2000);
+  assert.deepEqual(rows.map(row => row.totalTokens), Array.from({ length: 2000 }, (_, i) => i));
+  assert.ok(Date.now() - start < 60000); assert.equal(f.item.dead, false);
+  t.diagnostic(`${pages} pages plus settings replies in ${Date.now() - start}ms`);
+});
+test('Rich concurrent flood never starts queued service work and closes the document once', async t => {
+  let finish;
+  const f = pagingRich(t, { query: () => new Promise(resolve => { finish = resolve; }) });
+  const args = { query: { version: 1, resource: 'sessions' } };
+  const pending = [f.call('data.query', args)]; await new Promise(resolve => setImmediate(resolve));
+  for (let i = 0; i < 31; i++) pending.push(f.call('data.query', args));
+  assert.equal(f.queries(), 1);
+  assert.throws(() => f.call('settings.get', {}), /request limit/);
+  assert.equal(f.item.dead, true);
+  for (let i = 0; i < 1000; i++) assert.throws(() => f.call('data.query', args), /revoked/);
+  assert.ok((await Promise.all(pending)).every(reply => !reply.ok));
+  finish({ rows: ['private'] }); await new Promise(resolve => setImmediate(resolve)); assert.equal(f.queries(), 1);
+});
+for (const action of ['hide', 'revoke']) test(`Rich ${action} cancels queued queries before service entry`, async t => {
+  let finish;
+  const f = pagingRich(t, { settingsGet: () => new Promise(resolve => { finish = resolve; }) });
+  const blocked = f.call('settings.get', {}); await new Promise(resolve => setImmediate(resolve));
+  const queued = f.call('data.query', { query: { version: 1, resource: 'sessions' } });
+  if (action === 'hide') f.win.hide(); else f.manager.setEnabled('demo', false);
+  assert.equal((await queued).ok, false); assert.equal((await blocked).ok, false); assert.equal(f.queries(), 0);
+  finish({ values: {} }); await new Promise(resolve => setImmediate(resolve)); assert.equal(f.queries(), 0);
+});
+for (const change of ['privacy', 'source']) test(`Rich queued cursor observes ${change} change before projection`, async t => {
+  let finish;
+  const f = pagingRich(t, { count: 5, settingsGet: () => new Promise(resolve => { finish = resolve; }) });
+  const first = await f.call('data.query', { query: { version: 1, resource: 'sessions', page: { limit: 1 } } });
+  assert.equal(first.value.rows[0].title.startsWith('Row'), true);
+  const blocked = f.call('settings.get', {}); await new Promise(resolve => setImmediate(resolve));
+  const queued = f.call('data.query', { query: { version: 1, resource: 'sessions', page: { limit: 1, cursor: first.value.pageInfo.nextCursor } } });
+  f.business.publish(f.stats, change === 'privacy' ? { preferences: { sessionTitlesEnabled: false } } : { sourceId: 'other' });
+  finish({ values: {} }); await blocked;
+  const result = await queued; assert.equal(result.ok, true); assert.equal(result.value.availability, 'snapshotExpired');
+});
+test('Rich invalid cursor-shaped envelopes, oversized payloads and unsolicited calls still exhaust abuse budget', t => {
+  for (const [op, args] of [['data.query', { query: { page: { cursor: 'anything' } } }], ['settings.get', { payload: 'x'.repeat(65537) }], ['unknown', {}]]) {
+    const f = pagingRich(t);
+    for (let i = 0; i < 110; i++) assert.throws(() => f.call(op, args));
+    assert.equal(f.item.dead, true); assert.equal(f.queries(), 0);
+  }
+});
+
+test('Rich admits all sixteen subscription registrations plus settings in one startup burst', async t => {
+  const f = pagingRich(t, { count: 5 });
+  const pending = Array.from({ length: 16 }, (_, i) => f.call('data.subscribe', { id: `s${i}`, query: { version: 1, resource: 'sessions' } }));
+  pending.push(f.call('settings.get', {}));
+  assert.ok((await Promise.all(pending)).every(reply => reply.ok));
+  assert.equal(f.item.dead, false);
 });

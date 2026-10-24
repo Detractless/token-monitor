@@ -93,3 +93,45 @@ for (const message of [{ type: 'tick-done', seq: 1 }, { type: 'call', id: 1, op:
     assert.equal(forwarded.at(-1).type, 'ready', 'replacement gets a fresh budget');
   });
 }
+
+function capabilityHost(t) {
+  const forwarded = [], replies = [], intervals = [];
+  let receive, worker;
+  class Worker {
+    constructor() { worker = this; this.stopped = false; }
+    terminate() { this.stopped = true; }
+    postMessage(value) { replies.push(value); }
+  }
+  const context = vm.createContext({ window: { tmPluginHost: { send: m => forwarded.push(m), onMessage: cb => { receive = cb; } } },
+    TextEncoder, performance: { now: () => 0 }, Worker, Blob, URL, setInterval(fn) { intervals.push(fn); } });
+  const host = path.resolve(__dirname, '../../src/electron/plugins/host');
+  for (const file of ['message.js', 'runtime.js']) vm.runInContext(fs.readFileSync(path.join(host, file), 'utf8'), context);
+  receive({ type: 'boot', source: '' });
+  context.deliver = message => worker.onmessage({ data: message });
+  t.after(() => receive({ type: 'stop' }));
+  return { forwarded, replies, receive, worker: () => worker, send(message) { context.raw = JSON.stringify(message); vm.runInContext('deliver(JSON.parse(raw))', context); } };
+}
+test('Worker host relay permits 2000 matched query/settings round trips without spending unsolicited budget', t => {
+  const h = capabilityHost(t); let id = 0;
+  for (let i = 0; i < 2000; i++) for (const op of ['data.query', 'settings.get']) {
+    const message = { type: 'call', id: ++id, op, args: op === 'data.query' ? { query: { version: 1, resource: 'sessions', page: { limit: 1 } } } : {} };
+    h.send(message); assert.equal(h.forwarded.at(-1).id, id);
+    h.receive({ type: 'result', id, ok: true, value: {} });
+  }
+  assert.equal(h.worker().stopped, false); assert.equal(h.replies.filter(m => m.type === 'result').length, 4000);
+  for (let i = 0; i < 200; i++) h.send({ type: 'log', text: 'burst' });
+  h.send({ type: 'tick-done', seq: 1 }); assert.equal(h.worker().stopped, true, 'unsolicited bucket remains intact');
+});
+for (const mode of ['overflow', 'duplicate', 'forged-reply']) test(`Worker host request slots reject ${mode} before IPC flood`, t => {
+  const h = capabilityHost(t);
+  const send = id => h.send({ type: 'call', id, op: 'settings.get', args: {} });
+  send(1);
+  if (mode === 'duplicate') send(1);
+  else {
+    for (let i = 2; i <= 32; i++) send(i);
+    if (mode === 'forged-reply') h.send({ type: 'result', id: 1, ok: true });
+    send(33);
+  }
+  assert.equal(h.worker().stopped, true); assert.equal(h.forwarded.at(-1).reason, 'protocol-rate-limit');
+  assert.ok(h.forwarded.filter(m => m.type === 'call').length <= 32);
+});

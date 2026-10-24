@@ -22,7 +22,7 @@ The sandbox verifier deliberately creates flooding, busy and memory-consuming Wo
 ## Business/settings integration checks
 
 ```sh
-node --test tests/plugins-business-data.test.js tests/shared/pluginBusinessDerivations.test.js tests/electron/pluginBusinessCache.test.js tests/electron/pluginBusinessAdapters.test.js tests/shared/pluginSettings.test.js tests/electron/pluginSettingsStore.test.js tests/electron/pluginPresentation.test.js
+node --test tests/electron/pluginLazySessions.test.js tests/electron/pluginSessionSnapshot.test.js tests/electron/pluginCapabilities.test.js tests/plugins-business-data.test.js tests/shared/pluginBusinessDerivations.test.js tests/electron/pluginBusinessCache.test.js tests/electron/pluginBusinessAdapters.test.js tests/shared/pluginSettings.test.js tests/electron/pluginSettingsStore.test.js tests/electron/pluginPresentation.test.js
 node scripts/build-plugin-package.js docs/plugins/examples/business-studio /tmp/business-studio.tmplugin
 ```
 
@@ -50,4 +50,7 @@ The current long cache harness has reproduced `UnknownVizError` while capturing 
 
 Official bundled listings plus user-added HTTPS indexes are the supported distribution model. A submission backend, staff moderation, ratings and remote revocation service are not acceptance requirements. See the [author guide](author-quickstart.md), [web/data contract](author-ui-options.md) and [distribution contract](distribution-design.md).
 
-`env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron scripts/test-plugin-shared-runtime.cjs` exercises the production runtime and isolated preloads with synthetic host data: byte-bounded pagination beyond 500 rows, grants, host/author settings, real IPC conflict fields, hidden subscription release and warm restoration. It also checks same-plugin sibling refresh while another owner traverses page two, session-parent identity joins and subscription/calendar/balance derivations through the actual Rich bridge. It does not boot the collector or a user profile.
+`env -u ELECTRON_RUN_AS_NODE ./node_modules/.bin/electron scripts/test-plugin-shared-runtime.cjs` exercises the production runtime and isolated preloads with synthetic host data: byte-bounded model pagination and complete traversal of more than 10,000 sessions, grants, host/author settings, real IPC conflict fields, hidden subscription release and warm restoration. It also checks same-plugin sibling refresh while another owner traverses page two, session-parent identity joins and subscription/calendar/balance derivations through the actual Rich bridge. It does not boot the collector or a user profile.
+
+
+Large-session checks must traverse every cursor to completion and compare IDs, order and values with the small-query projection contract. Cover filters, equal sort keys, local/remote lifetime coverage, activity/accounting updates while building and paging, source/privacy resets, owner release, unsubscribe, revoke and dispose. A cancelled reader must not terminate a still-authorized sibling. Measure first-page time and event-loop progress separately from the existing synchronous all-time adapter; a yielding index alone is not an end-to-end latency guarantee. Memory/work exhaustion must return an explicit failure, never an apparently complete shortened collection. Host snapshot tests deep-freeze captured inputs and exercise actual composition/activity replacement to detect accidental in-place mutation.

@@ -3,7 +3,10 @@
 const { performance } = require('node:perf_hooks');
 const { createHmac, randomBytes } = require('node:crypto');
 const { CURRENCY_CODES } = require('../../shared/currency');
-const { normalizeQuery, projectResource, RESOURCES } = require('../../shared/plugins/businessData');
+const { normalizeQuery, projectResource, RESOURCES, sessionSources, projectSessionRow, matchesRow, compareRows } = require('../../shared/plugins/businessData');
+
+const { setImmediate: immediate } = require('node:timers/promises');
+const { createSessionBacking, buildSessionIndex, isLargeSessionPlan, PAGE_SCRATCH_BYTES } = require('./lazySessions');
 
 // Loaders reuse host-owned caches/resolvers. History may read the authenticated
 // host history endpoint. They never collect, probe providers, refresh credentials,
@@ -16,6 +19,15 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
   let sequence = 0;
   const snapshots = new Map(), subscriptions = new Map(), epochs = new Map(), loaders = new Map();
   const projections = new Map(), budgets = new Map();
+  const requests = new Set(), builds = new Map(), pagePins = new Map();
+  const backing = createSessionBacking({ admit(bytes) {
+    if (backing.bytes() + lazyBytes() + bytes > 128 * 1024 * 1024) throw new Error('budgetExceeded');
+  } });
+  function deleteSnapshot(id) {
+    const snapshot = snapshots.get(id);
+    snapshots.delete(id);
+    if (snapshot?.lease && !pagePins.has(snapshot)) snapshot.lease.release();
+  }
   const objectIds = new WeakMap();
   let objectSequence = 0;
   // Host snapshots are immutable. Dependency keys only inspect shallow metadata
@@ -108,9 +120,9 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
     const devices = stats?.devices || [];
     if (devices.length > MAX_COLLECTION_ROWS) throw new Error('budgetExceeded');
     let sources = restricted ? devices.filter(allowed) : [stats];
-    if (q.resource === 'sessions' && q.period === 'allTime' && extras.allTime?.sessionSources) {
-      if (extras.allTime.sessionSources.length > MAX_COLLECTION_ROWS) throw new Error('budgetExceeded');
-      sources = extras.allTime.sessionSources.filter(allowed);
+    if (q.resource === 'sessions') {
+      for (const context of sessionSources(stats, extras, q, a, opaque).contexts) inspect(context.sessions, true);
+      return;
     }
     if (periodResources.includes(q.resource)) {
       for (const source of sources) {
@@ -149,10 +161,11 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
     let ownBytes = own.reduce((n, p) => n + p.bytes, 0);
     while (own.length && (own.length >= 4 || ownBytes + value.bytes > MAX_OWNER_BYTES)) {
       const old = own.shift(); ownBytes -= old.bytes; projections.delete(old.id);
-      for (const [id, s] of snapshots) if (s.projectionId === old.id) snapshots.delete(id);
+      for (const [id, s] of snapshots) if (s.projectionId === old.id) deleteSnapshot(id);
     }
     if ([...projections.values()].reduce((n, p) => n + p.bytes, 0) + value.bytes > MAX_TOTAL_BYTES) throw new Error('budgetExceeded');
     if (projections.size >= 512) throw new Error('budgetExceeded');
+    lazyAdmission(value.pluginId, value.bytes);
     projections.set(value.id, value);
   }
   const sign = value => createHmac('sha256', identitySecret).update(JSON.stringify(value)).digest('base64url');
@@ -170,7 +183,7 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
   function assertLive(value, key) {
     if (disposed || authKey(authority(value)) !== key) throw new Error('denied');
   }
-  async function load(name, loader, captured, auth, key) {
+  async function load(name, loader, captured, auth, key, capturedSessions = false) {
     if (captured.extras[name] !== undefined || typeof loader !== 'function') return captured.extras[name];
     const cacheKey = loaderRevision(captured, name);
     let pending = loaders.get(cacheKey);
@@ -184,15 +197,15 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
     let value, failed;
     try { value = await pending.promise; } catch (error) { failed = error; }
     assertLive(auth, key);
-    if (disposed || loaderRevision(latest, name) !== cacheKey) throw new Error('snapshotExpired');
+    if (disposed || (!capturedSessions && loaderRevision(latest, name) !== cacheKey)) throw new Error('snapshotExpired');
     if (failed) throw failed;
     return value;
   }
   function sweep() {
-    for (const [key, value] of snapshots) if (now() - value.createdAt > snapshotTtlMs) snapshots.delete(key);
+    for (const [key, value] of snapshots) if (now() - value.createdAt > snapshotTtlMs) deleteSnapshot(key);
     for (const [key, value] of projections) if (now() - value.createdAt > snapshotTtlMs) {
       projections.delete(key);
-      for (const [id, snapshot] of snapshots) if (snapshot.projectionId === key) snapshots.delete(id);
+      for (const [id, snapshot] of snapshots) if (snapshot.projectionId === key) deleteSnapshot(id);
     }
     for (const [key, value] of loaders) if (now() >= value.retryAt) loaders.delete(key);
   }
@@ -218,40 +231,198 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
     // Detach all nested DTOs so an in-process bridge cannot mutate cached pages.
     return JSON.parse(JSON.stringify(result));
   }
-  async function query(raw, auth) {
+  // Internal third argument only; it never changes the plugin wire query.
+  async function query(raw, auth, { owner, signal } = {}) {
+    let request;
+    try {
+      const a = authority(auth), key = authKey(a);
+      if (requests.size >= 128 || [...requests].filter(r => r.pluginId === a.pluginId).length >= 32
+        || (owner && [...requests].filter(r => r.owner === owner).length >= 16)) return envelope('budgetExceeded');
+      let reject;
+      const cancelled = new Promise((_, fail) => { reject = fail; });
+      request = { owner, pluginId: a.pluginId, error: null, cancel(code = 'denied') {
+        if (!request.error) { request.error = new Error(code); reject(request.error); }
+      }, check() {
+        if (request.error) throw request.error;
+        assertLive(auth, key);
+        if (signal?.aborted) throw new Error('denied');
+        if (request.fence !== undefined && request.fence !== cursorFence(latest, request.query)) throw new Error('snapshotExpired');
+      } };
+      requests.add(request);
+      const abort = () => request.cancel();
+      signal?.addEventListener('abort', abort, { once: true });
+      try {
+        request.check();
+        const result = await Promise.race([queryInternal(raw, auth, request), cancelled]);
+        request.check(); return result;
+      } finally { signal?.removeEventListener('abort', abort); }
+    } catch (error) { return envelope(error.message === 'snapshotExpired' ? 'snapshotExpired' : 'denied'); }
+    finally {
+      if (request) {
+        requests.delete(request);
+        for (const build of builds.values()) build.waiters.delete(request);
+      }
+    }
+  }
+  const lazySnapshots = () => new Set([...snapshots.values(), ...pagePins.keys()].filter(s => s.lazy));
+  function lazyBytes(pluginId) {
+    let bytes = 0;
+    for (const s of lazySnapshots()) if (!pluginId || s.pluginId === pluginId) bytes += s.bytes;
+    for (const b of builds.values()) if (!pluginId || b.pluginId === pluginId) bytes += b.bytes;
+    for (const [s, count] of pagePins) if (!pluginId || s.pluginId === pluginId) bytes += count * PAGE_SCRATCH_BYTES;
+    for (const p of projections.values()) if (!pluginId || p.pluginId === pluginId) bytes += p.bytes;
+    return bytes;
+  }
+  function lazyAdmission(pluginId, bytes) {
+    if (lazyBytes(pluginId) + bytes > 64 * 1024 * 1024 || backing.bytes() + lazyBytes() + bytes > 128 * 1024 * 1024) throw new Error('budgetExceeded');
+  }
+  function makeSnapshot(captured, q, a, key, stamp, projected, rows, projectionId, createdAt = now()) {
+    const asOf = typeof captured.stats?.updatedAt === 'string' ? captured.stats.updatedAt : null;
+    const ageMs = asOf && Number.isFinite(Date.parse(asOf)) ? Math.max(0, now() - Date.parse(asOf)) : null;
+    return { id: randomBytes(16).toString('hex'), traversed: false, fence: cursorFence(captured, q), stamp, query: q, projectionId, revision: captured.revision, authKey: key, pluginId: a.pluginId, queryKey: queryKey(q), rows, createdAt, envelope: { version: 1, schemaVersion: 1, snapshotRevision: captured.revision, asOf, collectedAt: asOf, freshness: { ageMs, state: ageMs === null ? 'unknown' : ageMs > 120000 ? 'stale' : 'fresh' }, availability: projected.availability, redacted: projected.redacted ? ['identities'] : [], aggregateCoverage: { kind: projected.incomplete ? 'partial' : projected.availability === 'available' ? 'authorizedCollection' : 'unavailable', totalRows: rows.length, filtered: Object.keys(q.filter).length > 0, totalsArePageSums: false } } };
+  }
+  function retainSnapshot(snapshot) {
+    for (const [id, s] of snapshots) if (!s.traversed && s.authKey === snapshot.authKey && s.queryKey === snapshot.queryKey) deleteSnapshot(id);
+    const own = [...snapshots.values()].filter(s => s.pluginId === snapshot.pluginId).sort((a, b) => snapshotPriority(a) - snapshotPriority(b));
+    while (own.length >= 8) deleteSnapshot(own.shift().id);
+    if (snapshots.size >= 256) throw new Error('budgetExceeded');
+    snapshots.set(snapshot.id, snapshot);
+  }
+  async function lazyQuery(plan, captured, q, a, key, stamp, opaque, request, budget) {
+    const buildKey = sign([key, stamp, queryKey(q)]);
+    let build = builds.get(buildKey);
+    if (!build) {
+      if (builds.size >= 4 || [...builds.values()].filter(b => b.pluginId === a.pluginId).length >= 2) throw new Error('budgetExceeded');
+      lazyAdmission(a.pluginId, PAGE_SCRATCH_BYTES);
+      build = { bytes: PAGE_SCRATCH_BYTES, pluginId: a.pluginId, waiters: new Set(), createdAt: captured.capturedAt ?? now(), fence: cursorFence(captured, q) };
+      builds.set(buildKey, build);
+      const check = () => {
+        for (const waiter of build.waiters) {
+          try { waiter.check(); } catch (error) { waiter.cancel(error.message); build.waiters.delete(waiter); }
+        }
+        if (disposed || !build.waiters.size) throw new Error('denied');
+        if (build.fence !== cursorFence(latest, q) || now() - build.createdAt > Math.min(snapshotTtlMs, 10000)) throw new Error('snapshotExpired');
+      };
+      // Start in a microtask so this first waiter is registered before check().
+      build.promise = Promise.resolve().then(async () => {
+        const charge = ms => { budget.tokens -= ms / 10; };
+        build.lease = backing.pin(plan, a.pluginId, { check, charge });
+        const projected = await buildSessionIndex(plan, q, opaque, { check, charge, lease: build.lease, reserve(bytes) {
+          lazyAdmission(a.pluginId, bytes - build.bytes); build.bytes = bytes;
+        } });
+        check();
+        const snapshot = makeSnapshot(captured, q, a, key, stamp, projected, projected.rows, null, build.createdAt);
+        Object.assign(snapshot, { lease: projected.rows.length ? build.lease : null, lazy: true, bytes: projected.bytes, plan: projected.plan, opaque, owners: new Set() });
+        for (const waiter of build.waiters) snapshot.owners.add(waiter.owner);
+        retainSnapshot(snapshot);
+        build.bytes = 0; // The retained snapshot now owns the incremental charge.
+        if (snapshot.lease) { snapshot.lease.detach(); build.lease = null; } // Transfer the pin, not its charge.
+        return snapshot;
+      }).finally(() => { builds.delete(buildKey); build.lease?.release(); });
+    }
+    build.waiters.add(request);
+    const snapshot = await build.promise;
+    request.check();
+    return lazyPage(snapshot, 0, q, request);
+  }
+  async function lazyPage(snapshot, offset, q, request) {
+    let pages = 0, ownPages = 0;
+    for (const [s, count] of pagePins) { pages += count; if (s.pluginId === snapshot.pluginId) ownPages += count; }
+    if (pages >= 8 || ownPages >= 4) throw new Error('budgetExceeded');
+    lazyAdmission(snapshot.pluginId, PAGE_SCRATCH_BYTES);
+    pagePins.set(snapshot, (pagePins.get(snapshot) || 0) + 1);
+    snapshot.owners.add(request.owner);
+    const check = () => {
+      request.check();
+      if (snapshot.fence !== cursorFence(latest, q) || now() - snapshot.createdAt > snapshotTtlMs) throw new Error('snapshotExpired');
+    };
+    const result = { ...snapshot.envelope, rows: [], pageInfo: { nextCursor: null, hasMore: false }, aggregateCoverage: { ...snapshot.envelope.aggregateCoverage } };
+    let bytes = Buffer.byteLength(JSON.stringify(result)) + 512, index = offset;
+    let started = performance.now();
+    const charge = () => { const budget = budgets.get(snapshot.pluginId); if (budget) budget.tokens -= (performance.now() - started) / 10; };
+    try {
+      check();
+      for (; index < snapshot.rows.length && result.rows.length < q.page.limit; index++) {
+        const row = projectSessionRow(snapshot.rows[index].locator, snapshot.plan, snapshot.opaque);
+        const size = Buffer.byteLength(JSON.stringify(row)) + 1;
+        if (bytes + size > maxPayloadBytes) {
+          if (!result.rows.length) return envelope('payloadTooLarge', snapshot.revision);
+          break;
+        }
+        bytes += size; result.rows.push(row);
+        if (result.rows.length % 16 === 0 || performance.now() - started >= 4) {
+          charge(); await immediate(); check(); started = performance.now();
+        }
+      }
+      if (index < snapshot.rows.length) {
+        result.pageInfo.hasMore = true;
+        result.pageInfo.nextCursor = `${snapshot.id}.${index}.${sign([snapshot.id, index, snapshot.queryKey, snapshot.authKey, snapshot.revision])}`;
+      }
+      result.aggregateCoverage.pageRows = result.rows.length;
+      const detached = JSON.parse(JSON.stringify(result));
+      charge(); await immediate(); check(); started = performance.now();
+      return detached;
+    } finally {
+      charge(); const count = pagePins.get(snapshot) - 1;
+      if (count) pagePins.set(snapshot, count);
+      else { pagePins.delete(snapshot); if (!snapshots.has(snapshot.id)) snapshot.lease?.release(); }
+    }
+  }
+  async function queryInternal(raw, auth, request) {
+
     let q, a, key;
     try {
       if (disposed) return envelope('denied');
       q = normalizeQuery(raw);
+      request.query = q; request.fence = cursorFence(latest, q);
+      request.check();
       a = authority(auth); key = authKey(a);
       if (!a.permissions.includes(`tm.data.${RESOURCES[q.resource]}`)) return envelope('denied');
+      sweep();
       if (q.page.cursor) {
         const [snapshotId, rawOffset, signature] = q.page.cursor.split('.');
         const snapshot = snapshots.get(snapshotId), offset = Number(rawOffset);
         if (!snapshot || now() - snapshot.createdAt > snapshotTtlMs || snapshot.fence !== cursorFence(latest, snapshot.query)) return envelope('snapshotExpired');
         if (!Number.isSafeInteger(offset) || offset < 0 || offset >= snapshot.rows.length || snapshot.authKey !== key || snapshot.queryKey !== queryKey(q) || signature !== sign([snapshot.id, offset, snapshot.queryKey, snapshot.authKey, snapshot.revision])) return envelope('invalidCursor');
         snapshot.traversed = true;
-        return page(snapshot, offset, q);
+        return snapshot.lazy ? await lazyPage(snapshot, offset, q, request) : page(snapshot, offset, q);
       }
       if ((a.scope.deviceIds || q.filter.deviceId) && ['history', 'subscriptions'].includes(q.resource)) return envelope('scopeUnavailable');
       if (a.scope.accountIds && !['limits', 'subscriptions'].includes(q.resource)) return envelope('scopeUnavailable');
       // Identity-based filters must be checked before using a neutral cached
       // projection, otherwise removing search from that query would bypass auth.
       if ((!a.permissions.includes('tm.data.identities') || a.scope.identities === false) && (q.filter.search || q.sort.field === 'label')) return envelope('denied');
-      sweep();
-      const captured = latest, stamp = dependency(captured, q), qKey = queryKey(q);
+      let captured = latest;
+      const stamp = dependency(captured, q), qKey = queryKey(q), capturedAt = now();
       const reusable = [...snapshots.values()].find(s => s.stamp === stamp && s.authKey === key && s.queryKey === qKey);
-      if (reusable) return page(reusable, 0, q);
+      if (reusable) return reusable.lazy ? await lazyPage(reusable, 0, q, request) : page(reusable, 0, q);
       const neutral = { ...q, filter: q.filter.deviceId ? { deviceId: q.filter.deviceId } : {}, sort: { field: 'id', direction: 'asc' }, page: { limit: 100, cursor: null } };
       const projectionId = sign([key, stamp, neutral]);
       let projection = projections.get(projectionId);
       if (projection?.error) return envelope(projection.error);
+      const pendingBuild = builds.get(sign([key, stamp, qKey]));
+      if (pendingBuild) { captured = null; return await lazyQuery(null, null, q, a, key, stamp, null, request, null); }
       const budget = admit(a.pluginId, projection ? 0 : 1);
-      const extras = { ...captured.extras };
+      let extras = { ...captured.extras };
       if (!projection && q.resource === 'history' && !captured.stats?.history) extras.history = await load('history', loadHistory, captured, auth, key);
-      if (!projection && q.period === 'allTime' && periodResources.includes(q.resource)) extras.allTime = await load('allTime', loadAllTime, captured, auth, key);
+      if (!projection && q.period === 'allTime' && periodResources.includes(q.resource)) extras.allTime = await load('allTime', loadAllTime, captured, auth, key, q.resource === 'sessions');
       if (!projection && q.resource === 'subscriptions' && !captured.stats?.subscriptions) extras.subscriptions = await load('subscriptions', loadSubscriptions, captured, auth, key);
       assertLive(auth, key);
+      request.check();
+      if (!projection && q.resource === 'sessions') {
+        const identityScope = [a.pluginId, extras.sourceId || 'default', extras.identityEpoch || '1'];
+        const opaque = (kind, value) => `${kind}_${sign([...identityScope, kind, String(value)])}`;
+        const plan = sessionSources(captured.stats, extras, q, a, opaque);
+        if (isLargeSessionPlan(plan)) {
+          // Async work only pins selected session maps/records and scalar source
+          // metadata, never the unrelated graph reachable from captured stats.
+          const metadata = { stats: { updatedAt: captured.stats?.updatedAt },
+            extras: { preferences: { sessionTitlesEnabled: extras.preferences?.sessionTitlesEnabled } },
+            revision: captured.revision, sourceGeneration: captured.sourceGeneration, capturedAt };
+          captured = null; extras = null;
+          return await lazyQuery(plan, metadata, q, a, key, stamp, opaque, request, budget);
+        }
+      }
       if (!live(q, stamp)) return envelope('snapshotExpired');
       const started = performance.now();
       // An awaited loader may have been shared by another query.
@@ -283,33 +454,11 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
       const filterStarted = performance.now();
       const projected = projection.projected;
       // Query snapshots hold references to one authorized projection, not copies.
-      let rows = projected.rows.slice();
-      // Filters run only on the authorized, allowlisted DTO collection.
-      for (const [field, value] of Object.entries(q.filter)) {
-        if (field === 'deviceId') continue;
-        if (field === 'from' || field === 'to') rows = rows.filter(r => typeof r.date === 'string' && (field === 'from' ? r.date >= value : r.date <= value));
-        else if (field === 'search') rows = rows.filter(r => [r.title, r.label, r.accountName, r.accountEmail, r.planName].some(v => typeof v === 'string' && v.toLowerCase().includes(value.toLowerCase())));
-        else if (field === 'model') rows = rows.filter(r => r.model === value || r.models?.some(m => m.model === value));
-        else if (field === 'client') rows = rows.filter(r => r.client === value || r.clients?.some(c => c.client === value));
-        else rows = rows.filter(r => r[field] === value);
-      }
-      const compare = (x, y) => x === y ? 0 : x == null ? 1 : y == null ? -1 : x < y ? -1 : 1;
-      rows.sort((x, y) => {
-        const field = q.sort.field;
-        const order = compare(field === 'knownUsd' ? x.cost?.knownUsd : x[field], field === 'knownUsd' ? y.cost?.knownUsd : y[field]);
-        return (q.sort.direction === 'desc' ? -order : order) || compare(x.id, y.id);
-      });
+      const rows = projected.rows.filter(row => matchesRow(row, q));
+      rows.sort((x, y) => compareRows(x, y, q));
       budget.tokens -= (performance.now() - filterStarted) / 10;
-      const asOf = typeof captured.stats?.updatedAt === 'string' ? captured.stats.updatedAt : null;
-      const ageMs = asOf && Number.isFinite(Date.parse(asOf)) ? Math.max(0, now() - Date.parse(asOf)) : null;
-      const snapshot = { id: randomBytes(16).toString('hex'), traversed: false, fence: cursorFence(captured, q), stamp, query: q, projectionId, revision: captured.revision, authKey: key, pluginId: a.pluginId, queryKey: queryKey(q), rows, createdAt: now(), envelope: { version: 1, schemaVersion: 1, snapshotRevision: captured.revision, asOf, collectedAt: asOf, freshness: { ageMs, state: ageMs === null ? 'unknown' : ageMs > 120000 ? 'stale' : 'fresh' }, availability: projected.availability, redacted: projected.redacted ? ['identities'] : [], aggregateCoverage: { kind: projected.incomplete ? 'partial' : projected.availability === 'available' ? 'authorizedCollection' : 'unavailable', totalRows: rows.length, filtered: Object.keys(q.filter).length > 0, totalsArePageSums: false } } };
-      // Repeated Home refreshes replace their first page instead of occupying
-      // every slot. A snapshot becomes protected once a cursor is followed.
-      for (const [id, s] of snapshots) if (!s.traversed && s.authKey === key && s.queryKey === qKey) snapshots.delete(id);
-      const own = [...snapshots.values()].filter(s => s.pluginId === a.pluginId).sort((a, b) => snapshotPriority(a) - snapshotPriority(b));
-      while (own.length >= 8) snapshots.delete(own.shift().id);
-      if (snapshots.size >= 256) return envelope('budgetExceeded');
-      snapshots.set(snapshot.id, snapshot);
+      const snapshot = makeSnapshot(captured, q, a, key, stamp, projected, rows, projectionId);
+      retainSnapshot(snapshot);
       return page(snapshot, 0, q);
     } catch (error) {
       if (error.message === 'rateLimited') {
@@ -323,6 +472,7 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
     }
   }
   function stop(subscription) {
+    subscription.controller.abort();
     subscription.closed = true; subscriptions.delete(subscription.id);
     if (subscription.timer) clearTimeout(subscription.timer);
     subscription.timer = null; subscription.retryAt = 0;
@@ -366,7 +516,10 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
       latest = { stats, extras: { ...extras, preferences: extras.preferences ? { ...extras.preferences } : undefined, subscriptionContext: extras.subscriptionContext ? { date: extras.subscriptionContext.date, rates: Object.fromEntries(CURRENCY_CODES.map(code => [code, extras.subscriptionContext.rates?.[code]])) } : undefined }, revision: previous.revision + 1, sourceGeneration: previous.sourceGeneration + Number(sourceChanged), loaderVersions: {} };
       for (const name of ['history', 'allTime', 'subscriptions']) latest.loaderVersions[name] = sourceChanged || loaderDependency(previous, name) !== loaderDependency(latest, name) ? latest.revision : previous.loaderVersions[name];
       sweep();
-      for (const [id, s] of snapshots) if (s.fence !== cursorFence(latest, s.query)) snapshots.delete(id);
+      for (const request of requests) {
+        try { request.check(); } catch (error) { request.cancel(error.message); }
+      }
+      for (const [id, s] of snapshots) if (s.fence !== cursorFence(latest, s.query)) deleteSnapshot(id);
       // Retained pages share their original projection. Keep those bytes in the
       // same owner/global ledger until the final cursor releases them or expires.
       const retained = new Set([...snapshots.values()].map(s => s.projectionId));
@@ -389,10 +542,10 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
       if (q.page.cursor || !a.permissions.includes(`tm.data.${RESOURCES[q.resource]}`)) throw new Error('denied');
       const id = requestedId || `business-${++sequence}`;
       if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id) || subscriptions.has(id) || subscriptions.size >= 128 || [...subscriptions.values()].filter(s => s.owner === owner).length >= 16) throw new Error('subscriptionLimit');
-      const subscription = { id, owner, query: q, queryKey: queryKey(q), retryAt: 0, timerAt: 0, stamp: dependency(latest, q), fence: cursorFence(latest, q), reset: false, pluginId: a.pluginId, getAuth, callback, authKey: authKey(a), initialized: false, closed: false, timer: null, sequence: 0 };
+      const subscription = { controller: new AbortController(), id, owner, query: q, queryKey: queryKey(q), retryAt: 0, timerAt: 0, stamp: dependency(latest, q), fence: cursorFence(latest, q), reset: false, pluginId: a.pluginId, getAuth, callback, authKey: authKey(a), initialized: false, closed: false, timer: null, sequence: 0 };
       subscriptions.set(id, subscription);
       const initialStamp = subscription.stamp;
-      Promise.resolve().then(() => subscription.closed ? null : query(q, getAuth)).then(value => {
+      Promise.resolve().then(() => subscription.closed ? null : query(q, getAuth, { owner, signal: subscription.controller.signal })).then(value => {
         if (subscription.closed) return;
         deliver(subscription, { type: 'snapshot', version: 1, value, sequence: ++subscription.sequence });
         subscription.initialized = true;
@@ -401,14 +554,21 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
       return id;
     },
     unsubscribe(owner, id) { const s = subscriptions.get(id); if (!s || s.owner !== owner) return false; stop(s); return true; },
-    releaseOwner(owner) { for (const s of subscriptions.values()) if (s.owner === owner) stop(s); },
+    releaseOwner(owner) {
+      for (const s of subscriptions.values()) if (s.owner === owner) stop(s);
+      for (const request of requests) if (request.owner === owner) request.cancel();
+      for (const [id, s] of snapshots) if (s.lazy) {
+        s.owners.delete(owner); if (!s.owners.size) deleteSnapshot(id);
+      }
+    },
     revoke(pluginId) {
+      for (const request of requests) if (request.pluginId === pluginId) request.cancel();
       epochs.set(pluginId, (epochs.get(pluginId) || 0) + 1);
       for (const s of subscriptions.values()) if (s.pluginId === pluginId) stop(s);
-      for (const [id, snapshot] of snapshots) if (snapshot.pluginId === pluginId) snapshots.delete(id);
+      for (const [id, snapshot] of snapshots) if (snapshot.pluginId === pluginId) deleteSnapshot(id);
       for (const [id, projection] of projections) if (projection.pluginId === pluginId) projections.delete(id);
     },
-    dispose() { disposed = true; for (const s of subscriptions.values()) stop(s); snapshots.clear(); projections.clear(); budgets.clear(); loaders.clear(); latest = { stats: null, extras: {}, revision: latest.revision + 1 }; }
+    dispose() { disposed = true; for (const request of requests) request.cancel(); for (const s of subscriptions.values()) stop(s); for (const id of snapshots.keys()) deleteSnapshot(id); projections.clear(); budgets.clear(); loaders.clear(); latest = { stats: null, extras: {}, revision: latest.revision + 1 }; }
   };
 }
 module.exports = { createBusinessDataService };

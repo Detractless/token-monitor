@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const { TYPES, TARGETS, pageSnapshot } = require('../../shared/plugins/webUi');
 const { packageDirectory, readBounded } = require('./package');
 const { createRateLimiter } = require('./supervisor');
-const { capabilityError } = require('./capabilities');
+const { capabilityError, createCapabilityLane, isCapabilityRequest } = require('./capabilities');
 const { publicSettings } = require('./settings');
 // Internal resource policy; not author-controlled or a user-facing setting.
 const WARM_TTL_MS = 30_000, WARM_LIMIT = 3, WARM_MEMORY_KB = 256 * 1024, LIFECYCLE_TIMEOUT_MS = 750;
@@ -57,6 +57,7 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
   function destroy(old, reason = '') {
     if (old.dead) return;
     old.dead = true;
+    old.capabilityLane.close();
     if (mounted.get(old.key) === old) mounted.delete(old.key);
     parked.delete(old);
     clearTimeout(old.expiry); clearTimeout(old.lifecycleDeadline);
@@ -111,6 +112,7 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     if (!item) return;
     // Incomplete/failed documents never enter the cache or finish in hiding.
     if (!item.ready || item.awaitingResume || disposed || item.document.retainMs === 0) { destroy(item); return; }
+    item.capabilityLane.close();
     mounted.delete(key); item.parked = true; item.present = false;
     if (item.presentation && item.view.webContents.isFocused()) item.host.focus();
     item.view.setVisible(false); clearTimeout(item.resizeDeadline);
@@ -136,6 +138,7 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
   }
   function resume(item) {
     parked.delete(item); clearTimeout(item.expiry); item.parked = false;
+    item.capabilityLane = createCapabilityLane();
     item.awaitingResume = true; mounted.set(item.key, item);
     transition(item, 'active', epoch => {
       // Capability, placement and host ownership are rechecked at adoption;
@@ -151,18 +154,19 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
       item.view.webContents.send('plugins:web:resume', epoch);
     });
   }
-  function allowed(event) {
+  function allowed(event, charge = true) {
     const item = [...mounted.values()].find(item => item.view.webContents === event.sender);
     if (!item || item.resuming || event.sender !== item.view.webContents || event.senderFrame !== event.sender.mainFrame || event.sender.getURL() !== item.url) throw new Error('document capability revoked');
     authorized(item);
-    if (!item.limiter.take()) { stop('rate-limit', item.key); throw new Error('web UI rate limit'); }
+    if (charge && !item.limiter.take()) { stop('rate-limit', item.key); throw new Error('web UI rate limit'); }
     return item;
   }
   function reading(item) {
     return Object.fromEntries(item.sources.map(source => [source, bus.read(manager.webSource(item.ref, source))]));
   }
   ipcMain.handle('plugins:web:call', (event, op, args) => {
-    const item = allowed(event);
+    const request = isCapabilityRequest(op, args);
+    const item = allowed(event, !request);
     if (op === 'resumed') {
       if (!item.awaitingResume || args !== item.epoch) return false;
       item.awaitingResume = false; clearTimeout(item.lifecycleDeadline);
@@ -180,8 +184,20 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
     if (op === 'context') return item.context;
     if (['data.query', 'data.subscribe', 'data.unsubscribe', 'settings.get', 'settings.update', 'settings.reset'].includes(op)) {
       if (!documentCapabilities.call) throw new Error('unsupported capability');
+      if (!request) throw new Error('invalid capability request');
       const epoch = item.epoch;
-      return Promise.resolve().then(() => documentCapabilities.call(item, op, args)).then(value => {
+      let pending;
+      try {
+        pending = item.capabilityLane.run(op, args, () => {
+          if (item.dead || item.parked || item.epoch !== epoch || mounted.get(item.key) !== item) throw new Error('document capability revoked');
+          authorized(item);
+          return documentCapabilities.call(item, op, args);
+        });
+      } catch (error) {
+        if (error.code === 'request-limit') destroy(item, 'rate-limit');
+        throw error;
+      }
+      return pending.then(value => {
         if (item.dead || item.parked || item.epoch !== epoch || mounted.get(item.key) !== item) throw new Error('document capability revoked');
         authorized(item);
         return { __tmCapability: 1, ok: true, value };
@@ -250,7 +266,7 @@ function createWebUi({ electron, manager, bus, isMainSender, surfaceContext = ()
       }
       const view = new WebContentsView({ webPreferences: { session: ses, preload: path.join(__dirname, 'webPreload.js'), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true, webviewTag: false, navigateOnDragDrop: false, backgroundThrottling: true, spellcheck: false } });
       view.setBackgroundColor(floating ? '#00000000' : context.theme.colors.background || '#17191c');
-      const item = { ...info, key, floating, ref: info.ref, target: info.document.target, host, window: win, view, session: ses, assets, origin, url, context, ready: false, loaded: false, prepared: false, present, sources: [], owner: `web:${view.webContents.id}`, limiter: createRateLimiter({ capacity: 100, perSecond: 30 }), dead: false, parked: false, epoch: 0, lifecycle: Promise.resolve(), hidden: () => { if (mounted.get(key) === item) park(key); }, closed: () => destroy(item), detached: () => { if (item.ownsDebugger) destroy(item, 'load-failed'); }, resized: () => { if (mounted.get(key) === item) suspendGeometry(key); } };
+      const item = { ...info, key, floating, ref: info.ref, target: info.document.target, host, window: win, view, session: ses, assets, origin, url, context, ready: false, loaded: false, prepared: false, present, sources: [], owner: `web:${view.webContents.id}`, capabilityLane: createCapabilityLane(), limiter: createRateLimiter({ capacity: 100, perSecond: 30 }), dead: false, parked: false, epoch: 0, lifecycle: Promise.resolve(), hidden: () => { if (mounted.get(key) === item) park(key); }, closed: () => destroy(item), detached: () => { if (item.ownsDebugger) destroy(item, 'load-failed'); }, resized: () => { if (mounted.get(key) === item) suspendGeometry(key); } };
       mounted.set(key, item);
       view.webContents.debugger.on('detach', item.detached);
       if (item.target !== 'settings') manager.setWebVisible(item.owner, item.ref);

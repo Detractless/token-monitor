@@ -52,14 +52,14 @@ const CODE = {
   views: [{ id: 'pulse', title: 'Pulse', surfaces: ['home', 'notch'], layout: { type: 'stat', value: { $: '@tpm', fmt: 'compact' } } }]
 };
 
-function setup({ plugins = [SYSTEM, CODE], states = {}, netFetch, authorSettings, capabilities } = {}) {
+function setup({ plugins = [SYSTEM, CODE], states = {}, netFetch, authorSettings, capabilities, realTime = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-plugins-'));
   const builtinDir = path.join(root, 'builtin');
   const userDir = path.join(root, 'user');
   fs.mkdirSync(builtinDir);
   fs.mkdirSync(userDir);
   for (const manifest of plugins) writePlugin(userDir, manifest, manifest.main ? 'tm.onTick(() => {});' : undefined);
-  const clock = fakeClock();
+  const clock = realTime ? { now: Date.now, setTimer: setTimeout, clearTimer: clearTimeout } : fakeClock();
   const bus = createDataBus({ now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, defer: (fn) => fn() });
   let samples = 0;
   bus.defineSource('sys.cpu', { sample: () => { samples += 1; return 42; } });
@@ -101,7 +101,7 @@ function setup({ plugins = [SYSTEM, CODE], states = {}, netFetch, authorSettings
   });
   manager.reload();
   return {
-    manager, bus, clock, sent, events, notifications, fetches, running,
+    manager, bus, clock, sent, events, notifications, fetches, running, sandbox,
     samples: () => samples,
     settings: () => settings,
     setSettings: (patch) => { settings = { ...settings, ...patch }; },
@@ -676,4 +676,72 @@ test('Worker business subscriptions release on idle and re-register after resume
   env.manager.setSurfaceDemand('notch', []); const count = env.sent.length;
   business.publish({}); await new Promise(resolve => setTimeout(resolve, 120));
   assert.equal(env.sent.slice(count).some(([, value]) => value.type === 'business-data'), false);
+});
+
+for (const limit of [1, 100]) test(`Worker manager traverses all 2000 rows at limit ${limit} with mixed settings traffic`, { timeout: 60000 }, async t => {
+  const { createBusinessDataService } = require('../../src/electron/plugins/businessData');
+  const { createPluginCapabilities } = require('../../src/electron/plugins/capabilities');
+  const { createPluginSettingsStore } = require('../../src/electron/plugins/settings');
+  const business = createBusinessDataService();
+  business.publish({ periods: { today: { sessions: Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [i, { sessionId: String(i), client: 'codex', totalTokens: i, title: `Row ${i}` }])) } } });
+  const capabilities = createPluginCapabilities({ businessData: business });
+  const env = setup({ realTime: true, capabilities, plugins: [{ ...CODE, permissions: ['tm.data.sessions', 'tm.data.identities'], settings: { version: 1, fields: [{ id: 'count', type: 'number', label: 'Count', default: 1 }] } }], authorSettings: createPluginSettingsStore({ directory: path.join(os.tmpdir(), `tm-unused-settings-${process.pid}`) }) });
+  t.after(() => { env.manager.dispose(); env.bus.dispose(); capabilities.dispose(); business.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); });
+  env.manager.setEnabled('pulse', true); env.manager.setSurfaceDemand('notch', ['pulse/pulse']); env.manager.handleMessage('pulse', { type: 'ready' });
+  // Exercise the actual trusted host relay too: only the browser Worker primitive
+  // is faked. Requests cross its validator/slot ledger, main manager and adapter;
+  // matching main replies release host slots before reaching the author.
+  const vm = require('node:vm');
+  let receive, worker, id = 0;
+  const waiting = new Map();
+  class Worker {
+    constructor() { worker = this; }
+    terminate() {}
+    postMessage(message) {
+      if (message.type === 'result') { waiting.get(message.id)?.(message); waiting.delete(message.id); }
+    }
+  }
+  const context = vm.createContext({ window: { tmPluginHost: { send: message => env.manager.handleMessage('pulse', structuredClone(message)), onMessage: fn => { receive = fn; } } },
+    Worker, Blob, URL, TextEncoder, performance, setInterval() {} });
+  const host = path.resolve(__dirname, '../../src/electron/plugins/host');
+  for (const file of ['message.js', 'runtime.js']) vm.runInContext(fs.readFileSync(path.join(host, file), 'utf8'), context);
+  receive({ type: 'boot', source: '' }); context.deliver = message => worker.onmessage({ data: message });
+  const originalSend = env.sandbox.send;
+  env.sandbox.send = (pluginId, message) => { const sent = originalSend(pluginId, message); if (sent) receive(message); return sent; };
+  t.after(() => receive({ type: 'stop' }));
+  async function call(op, args) {
+    const requestId = ++id;
+    const pending = new Promise(resolve => waiting.set(requestId, resolve));
+    context.raw = JSON.stringify({ type: 'call', id: requestId, op, args });
+    vm.runInContext('deliver(JSON.parse(raw))', context);
+    const result = await pending;
+    assert.equal(result.ok, true, JSON.stringify(result)); return result.value;
+  }
+  let cursor, pages = 0;
+  const rows = [], start = Date.now();
+  do {
+    const result = await call('data.query', { query: { version: 1, resource: 'sessions', sort: { field: 'totalTokens' }, page: { limit, ...(cursor ? { cursor } : {}) } } });
+    assert.equal(result.availability, 'available'); assert.ok(Buffer.byteLength(JSON.stringify(result)) <= 56 * 1024);
+    rows.push(...result.rows); cursor = result.pageInfo.nextCursor; pages++;
+    const settings = await call('settings.get', {}); assert.equal(settings.values.count, 1);
+  } while (cursor);
+  assert.equal(rows.length, 2000); assert.equal(new Set(rows.map(row => row.id)).size, 2000);
+  assert.deepEqual(rows.map(row => row.totalTokens), Array.from({ length: 2000 }, (_, i) => i));
+  assert.ok(Date.now() - start < 60000); assert.equal(env.events.some(e => e[0] === 'kill'), false);
+  t.diagnostic(`${pages} pages plus settings replies in ${Date.now() - start}ms`);
+});
+
+test('Worker concurrent capability flood is bounded and cancels queued queries on teardown', async t => {
+  const { createPluginCapabilities } = require('../../src/electron/plugins/capabilities');
+  let starts = 0, finish;
+  const capabilities = createPluginCapabilities({ businessData: { query() { starts++; return new Promise(resolve => { finish = resolve; }); }, releaseOwner() {} } });
+  const env = setup({ capabilities, plugins: [{ ...CODE, permissions: ['tm.data.sessions'] }] });
+  t.after(() => { env.manager.dispose(); env.bus.dispose(); capabilities.dispose(); fs.rmSync(env.root, { recursive: true, force: true }); });
+  env.manager.setEnabled('pulse', true); env.manager.setSurfaceDemand('notch', ['pulse/pulse']); env.manager.handleMessage('pulse', { type: 'ready' });
+  const send = id => env.manager.handleMessage('pulse', { type: 'call', id, op: 'data.query', args: { query: { version: 1, resource: 'sessions' } } });
+  send(1); await new Promise(resolve => setImmediate(resolve));
+  for (let i = 2; i <= 1000; i++) send(i);
+  assert.equal(starts, 1); assert.equal(env.events.filter(e => e[0] === 'kill').length, 1);
+  finish({ rows: ['late'] }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(starts, 1); assert.equal(env.sent.some(([, m]) => m.type === 'result' && m.ok), false);
 });

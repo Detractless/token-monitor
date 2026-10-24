@@ -166,6 +166,84 @@ function normalizeQuery(raw) {
   if (!['daily', 'monthly', 'summary'].includes(resolution) || !['none', 'model', 'client'].includes(groupBy) || (raw.resource !== 'history' && (resolution !== 'daily' || groupBy !== 'none'))) failure('invalidQuery');
   return { version: VERSION, resource: raw.resource, period, filter, sort, resolution, groupBy, page: { limit, cursor: raw.page?.cursor ?? null } };
 }
+// One source/coverage and allowlist authority for eager and lazy sessions.
+function sessionSources(stats, extras, query, auth, opaque) {
+  const identities = auth.permissions.includes('tm.data.identities') && auth.scope?.identities !== false;
+  const id = (kind, key) => opaque(kind, String(key));
+  const restricted = !!auth.scope?.deviceIds || !!query.filter.deviceId;
+  const allowed = d => (!auth.scope?.deviceIds || auth.scope.deviceIds.includes(d.deviceId))
+    && (!query.filter.deviceId || query.filter.deviceId === id('device', d.deviceId));
+  const lifetime = query.period === 'allTime';
+  const devices = Array.isArray(stats?.devices) ? stats.devices : [];
+  const candidates = lifetime && extras.allTime?.sessionSources
+    ? extras.allTime.sessionSources : restricted ? devices : [{ ...stats, deviceId: null }];
+  if (candidates.length > MAX_ROWS) failure('budgetExceeded');
+  const sources = candidates.filter(allowed);
+  let incomplete = false, detailed = 0, periods = 0;
+  const contexts = sources.map(source => {
+    let period = source.periods?.[query.period];
+    if (!source.deviceId && !restricted && lifetime && extras.allTime) {
+      const accounting = ['totalTokens', 'tokens', 'models', 'clients', 'sessions', 'projects'].some(key => Object.hasOwn(extras.allTime, key));
+      period = period || accounting ? { ...period, ...extras.allTime } : undefined;
+    }
+    if (period) periods++;
+    const detail = !!period && (!lifetime || (source.sessionDetailAvailable !== false && !!period.sessions));
+    if (detail) detailed++;
+    if (detail) incomplete ||= !!source.sessionDetailsOmitted?.[query.period];
+    const sourceDeviceId = lifetime && !restricted ? null : source.deviceId;
+    return { sessions: detail ? period.sessions : undefined, scopeKey: sourceDeviceId || 'aggregate',
+      base: { period: query.period, deviceId: sourceDeviceId ? id('device', sourceDeviceId) : null,
+        collectedAt: text(source.updatedAt), stale: typeof source.stale === 'boolean' ? source.stale : null } };
+  });
+  const available = lifetime ? detailed > 0 : sources.length > 0 && periods === sources.length;
+  incomplete ||= lifetime && available && detailed < sources.length;
+  return { contexts, identities, titles: identities && extras.preferences?.sessionTitlesEnabled !== false,
+    availability: available ? 'available' : 'notCollected', redacted: !identities, incomplete };
+}
+function* sessionEntries(plan) {
+  for (const context of plan.contexts) for (const key in context.sessions) {
+    if (Object.hasOwn(context.sessions, key)) yield { session: context.sessions[key], key, context };
+  }
+}
+function sessionFields({ session, key, context }, plan, id) {
+  const scopeKey = context.scopeKey;
+  return { id: id('session', `${scopeKey}:${session.client}:${session.sessionId || key}`),
+    client: text(session.client), lastUsedAt: text(session.lastUsedAt),
+    title: plan.titles ? text(session.title) : null,
+    projectId: session.projectLabel ? id('project', `${scopeKey}:${canonicalProjectKey(session.projectLabel)}`) : null,
+    totalTokens: number(session.totalTokens ?? session.tokens),
+    cost: { knownUsd: number(session.costUsd ?? session.cost ?? session.totalCost) } };
+}
+function projectSessionRow(locator, plan, id, visit = entries) {
+  const { session, key, context } = locator;
+  return { ...sessionFields(locator, plan, id), ...context.base, ...usage(session),
+    ...pick(session, 'startedAt sessionKind', '', 'turnEnded'), ...sessionParent(session, key, context.scopeKey, id),
+    projectPath: plan.identities ? text(session.projectId) : null,
+    promptCache: pick(session.promptCache, 'observedAt', 'ttlSeconds'), liveActivity: pick(session.liveActivity, 'state observedAt'),
+    waitingForInput: typeof session.waitingForInput === 'boolean' ? session.waitingForInput : null,
+    models: visit(session.models).map(([model, tokens]) => ({ model: text(model), totalTokens: number(tokens), knownUsd: number(session.modelCosts?.[model]) })),
+    providers: visit(session.providers).map(([provider, tokens]) => ({ provider: text(provider), totalTokens: number(tokens) })) };
+}
+function sessionModelMatches(session, model) {
+  for (const key in session.models) if (Object.hasOwn(session.models, key) && text(key) === model) return true;
+  return false;
+}
+function matchesRow(row, query, modelMatches) {
+  return Object.entries(query.filter).every(([field, value]) => {
+    if (field === 'deviceId') return true; // Applied by source selection.
+    if (field === 'from' || field === 'to') return typeof row.date === 'string' && (field === 'from' ? row.date >= value : row.date <= value);
+    if (field === 'search') return [row.title, row.label, row.accountName, row.accountEmail, row.planName].some(v => typeof v === 'string' && v.toLowerCase().includes(value.toLowerCase()));
+    if (field === 'model') return modelMatches ?? (row.model === value || !!row.models?.some(m => m.model === value));
+    if (field === 'client') return row.client === value || !!row.clients?.some(c => c.client === value);
+    return row[field] === value;
+  });
+}
+const compare = (x, y) => x === y ? 0 : x == null ? 1 : y == null ? -1 : x < y ? -1 : 1;
+function compareRows(x, y, query) {
+  const field = query.sort.field;
+  const order = compare(field === 'knownUsd' ? x.cost?.knownUsd : x[field], field === 'knownUsd' ? y.cost?.knownUsd : y[field]);
+  return (query.sort.direction === 'desc' ? -order : order) || compare(x.id, y.id);
+}
 function projectResource(stats, extras, query, auth, opaque) {
   let work = 0;
   const boundedEntries = entries;
@@ -174,6 +252,15 @@ function projectResource(stats, extras, query, auth, opaque) {
   if (auth.active !== true || !grants.has(`tm.data.${RESOURCES[query.resource]}`)) failure('denied');
   const identities = grants.has('tm.data.identities') && auth.scope?.identities !== false;
   if (!identities && (query.filter.search || query.sort.field === 'label')) failure('denied');
+  if (query.resource === 'sessions') {
+    if (auth.scope?.accountIds) failure('scopeUnavailable');
+    const plan = sessionSources(stats, extras, query, auth, opaque), rows = [];
+    for (const locator of sessionEntries(plan)) {
+      if (++work > MAX_ROWS * 4 || rows.length >= MAX_ROWS) failure('budgetExceeded');
+      rows.push(projectSessionRow(locator, plan, opaque, visit));
+    }
+    return { rows, availability: plan.availability, redacted: plan.redacted, incomplete: plan.incomplete };
+  }
   const rows = [];
   const id = (kind, key) => opaque(kind, String(key));
   const add = row => { if (rows.length >= MAX_ROWS) failure('budgetExceeded'); rows.push(row); };
@@ -184,13 +271,6 @@ function projectResource(stats, extras, query, auth, opaque) {
   const restricted = !!auth.scope?.deviceIds || !!query.filter.deviceId;
   if (auth.scope?.accountIds && !['limits', 'subscriptions'].includes(query.resource)) failure('scopeUnavailable');
   let sources = restricted ? selected : [{ ...stats, deviceId: null }];
-  // The host explicitly identifies lifetime detail provenance. Device scope
-  // must apply before computing coverage, including unavailable remote devices.
-  const lifetimeSessions = query.resource === 'sessions' && query.period === 'allTime';
-  if (lifetimeSessions && extras.allTime?.sessionSources) {
-    sources = extras.allTime.sessionSources.filter(d => deviceAllowed(d)
-      && (!query.filter.deviceId || query.filter.deviceId === id('device', d.deviceId)));
-  }
   const periodFor = source => {
     const period = source.periods?.[query.period];
     if (source.deviceId || restricted || query.period !== 'allTime' || !extras.allTime) return period;
@@ -202,17 +282,12 @@ function projectResource(stats, extras, query, auth, opaque) {
   let incomplete = false;
   if (['usage', 'models', 'tools', 'sessions', 'projects'].includes(query.resource)) {
     available = sources.length > 0 && sources.every(s => !!periodFor(s));
-    if (lifetimeSessions) {
-      const hasDetail = s => s.sessionDetailAvailable !== false && !!periodFor(s)?.sessions;
-      available = sources.some(hasDetail);
-      incomplete = available && sources.some(s => !hasDetail(s));
-    }
     for (const source of sources) {
       const period = periodFor(source);
       if (!period) continue;
       // Keep aggregate IDs aligned with other periods and project relations;
       // provenance sources are internal, not a change to the requested scope.
-      const sourceDeviceId = lifetimeSessions && !restricted ? null : source.deviceId;
+      const sourceDeviceId = source.deviceId;
       const deviceId = sourceDeviceId ? id('device', sourceDeviceId) : null;
       const scopeKey = sourceDeviceId || 'aggregate';
       const base = { period: query.period, deviceId, collectedAt: text(source.updatedAt), stale: typeof source.stale === 'boolean' ? source.stale : null };
@@ -225,11 +300,6 @@ function projectResource(stats, extras, query, auth, opaque) {
           if (dto.cost.unpricedTokens === null && number(period.unpricedTokens) === 0) dto.cost = { ...dto.cost, unpricedTokens: 0, completeness: dto.cost.knownUsd === null ? 'unknown' : 'complete' };
           add({ id: id(prefix, `${scopeKey}:${key}`), ...base, [model ? 'model' : 'client']: text(key), label: text(key), ...dto, throughput: pick(period.modelThroughput?.[key], '', 'timedOutputTokens timedDurationMs timedTokens'), ...(model ? {} : { models: visit(period.clientModels?.[key]).map(([name, totalTokens]) => ({ model: text(name), totalTokens: number(totalTokens), knownUsd: number(period.clientModelCosts?.[key]?.[name]) })) }) });
         }
-      }
-      if (query.resource === 'sessions') {
-        if (lifetimeSessions && (source.sessionDetailAvailable === false || !period.sessions)) continue;
-        incomplete ||= !!source.sessionDetailsOmitted?.[query.period];
-        for (const [key, session] of visit(period.sessions)) add({ id: id('session', `${scopeKey}:${session.client}:${session.sessionId || key}`), ...base, ...usage(session), ...pick(session, 'client startedAt lastUsedAt sessionKind', '', 'turnEnded'), ...sessionParent(session, key, scopeKey, id), title: identities && extras.preferences?.sessionTitlesEnabled !== false ? text(session.title) : null, projectId: session.projectLabel ? id('project', `${scopeKey}:${canonicalProjectKey(session.projectLabel)}`) : null, projectPath: identities ? text(session.projectId) : null, promptCache: pick(session.promptCache, 'observedAt', 'ttlSeconds'), liveActivity: pick(session.liveActivity, 'state observedAt'), waitingForInput: typeof session.waitingForInput === 'boolean' ? session.waitingForInput : null, models: visit(session.models).map(([model, tokens]) => ({ model: text(model), totalTokens: number(tokens), knownUsd: number(session.modelCosts?.[model]) })), providers: visit(session.providers).map(([provider, tokens]) => ({ provider: text(provider), totalTokens: number(tokens) })) });
       }
       if (query.resource === 'projects') {
         incomplete ||= !!source.projectsIncomplete || !!source.periodProjectsOmitted?.[query.period] || source.projectsEnabled === false || (query.period === 'allTime' && (!!source.allTimeProjectsOmitted || !!source.allTimeProjectsIncomplete));
@@ -275,4 +345,4 @@ function projectResource(stats, extras, query, auth, opaque) {
   }
   return { rows, availability: available ? 'available' : 'notCollected', redacted: !identities, incomplete };
 }
-module.exports = { VERSION, RESOURCES, MAX_ROWS, normalizeQuery, projectResource };
+module.exports = { VERSION, RESOURCES, MAX_ROWS, normalizeQuery, projectResource, sessionSources, sessionEntries, sessionFields, projectSessionRow, sessionModelMatches, matchesRow, compareRows };
