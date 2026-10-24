@@ -120,3 +120,56 @@ test("generic agent prompt is readable without scripts and consistent across ent
   }
   assert.deepEqual(prompts[0], prompts[1]);
 });
+
+test("topic navigation encodes fragment text and highlights the final Unicode section", async () => {
+  const { runInNewContext } = await import('node:vm');
+  const source = await readFile(new URL('site/scripts/docs.js', root), 'utf8');
+  const nodes = [];
+  function element(tag) {
+    const attrs = {};
+    const node = {
+      tagName: tag.toUpperCase(), children: [], hidden: false,
+      classList: { toggle() {} },
+      setAttribute(key, value) { attrs[key] = value; },
+      getAttribute(key) { return key === 'href' ? this.href : attrs[key]; },
+      removeAttribute(key) { delete attrs[key]; },
+      appendChild(child) { this.children.push(child); },
+      contains() { return false; }, addEventListener() {},
+      querySelector(selector) { return this.children.find(child => '.' + child.className === selector); },
+      querySelectorAll(selector) {
+        const descendants = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
+        return descendants.filter(child => selector === '*' || (selector === 'a' ? child.tagName === 'A' : '.' + child.className === selector));
+      },
+      getBoundingClientRect() { return { top: 500 }; }
+    };
+    nodes.push(node);
+    return node;
+  }
+  const headings = ['start', '數字 / #?\"<end>'].map(anchor => {
+    const heading = element('h2');
+    heading.setAttribute('data-anchor', anchor);
+    heading.textContent = anchor;
+    return heading;
+  });
+  const parent = element('div');
+  const document = {
+    scrollingElement: { scrollHeight: 1000 }, activeElement: null,
+    createElement: element,
+    querySelector(selector) {
+      return selector.includes('aria-current') ? { parentNode: parent } : nodes.find(node => node.className === 'docs-topic-links');
+    }
+  };
+  const context = { document, docsMessages: () => ({ 'docs.toc': 'Contents' }), window: {
+    scrollY: 500, innerHeight: 500, innerWidth: 390,
+    addEventListener() {}, removeEventListener() {}, requestAnimationFrame(fn) { fn(); }, setTimeout(fn) { fn(); }
+  } };
+  runInNewContext(source.slice(source.indexOf('function buildTopicNav('), source.indexOf('function setupCopyButtons(')), context);
+  context.watchTopic(context.buildTopicNav({ querySelectorAll: () => headings }));
+  const links = parent.querySelectorAll('a');
+  assert.equal(links.length, 2);
+  assert.equal(links[1].href, '#' + encodeURIComponent(headings[1].textContent));
+  assert.equal(decodeURIComponent(new URL(links[1].href, 'https://docs.test/').hash.slice(1)), headings[1].textContent);
+  assert.equal(links[1].getAttribute('aria-current'), 'location');
+  assert.equal(links[0].getAttribute('aria-current'), undefined);
+  assert.equal(links[1].textContent, headings[1].textContent);
+});

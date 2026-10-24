@@ -248,7 +248,7 @@ function buildTopicNav(article) {
     var anchor = heading.getAttribute('data-anchor');
     var item = document.createElement('li');
     var link = document.createElement('a');
-    link.href = '#' + anchor;
+    link.href = '#' + encodeURIComponent(anchor);
     link.textContent = heading.textContent;
     item.appendChild(link);
     if (heading.tagName === 'H2') {
@@ -294,7 +294,7 @@ function watchTopic(headings) {
       children.hidden = !active && !children.contains(document.activeElement);
     });
     list.querySelectorAll('a').forEach(function (link) {
-      if (link.getAttribute('href') === '#' + current) {
+      if (link.getAttribute('href') === '#' + encodeURIComponent(current)) {
         var changed = link.getAttribute('aria-current') !== 'location';
         link.setAttribute('aria-current', 'location');
         if (changed && window.innerWidth > 860) {

@@ -186,7 +186,8 @@ test('another plugin cannot FIFO-evict an admitted cursor with many resources an
 });
 
 test('large sessions build query indices without eager projections across searches', async t => {
-  const { service, calls } = setup(t);
+  // This checks projection reuse, not CPU debt under machine-dependent load.
+  const { service, calls } = setup(t, undefined, { performance: { now: () => 0 } });
   service.publish(fixture(5001));
   for (const search of ['one', 'two', 'three']) {
     const result = await service.query(q('sessions', { filter: { search } }), auth());

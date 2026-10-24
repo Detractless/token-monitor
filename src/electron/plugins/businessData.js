@@ -175,13 +175,14 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
     if (!a || a.active !== true || typeof a.pluginId !== 'string' || !a.pluginId) throw new Error('denied');
     return { pluginId: a.pluginId, active: true, permissions: [...(a.permissions || [])].sort(), scope: a.scope || {}, revision: a.revision ?? null, epoch: epochs.get(a.pluginId) || 0 };
   }
-  const authKey = a => sign(a);
+  // Binds normalized grants, scope and generation; this is not a password hash.
+  const authorityFingerprint = a => sign(a);
   const queryKey = q => sign({ ...q, page: { limit: q.page.limit } });
   function envelope(code, revision = latest.revision) {
     return { version: 1, schemaVersion: 1, snapshotRevision: revision, availability: code, rows: [], pageInfo: { nextCursor: null, hasMore: false }, aggregateCoverage: { kind: 'unavailable', totalRows: null } };
   }
   function assertLive(value, key) {
-    if (disposed || authKey(authority(value)) !== key) throw new Error('denied');
+    if (disposed || authorityFingerprint(authority(value)) !== key) throw new Error('denied');
   }
   async function load(name, loader, captured, auth, key, capturedSessions = false) {
     if (captured.extras[name] !== undefined || typeof loader !== 'function') return captured.extras[name];
@@ -225,7 +226,7 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
     }
     if (index < snapshot.rows.length) {
       result.pageInfo.hasMore = true;
-      result.pageInfo.nextCursor = `${snapshot.id}.${index}.${sign([snapshot.id, index, snapshot.queryKey, snapshot.authKey, snapshot.revision])}`;
+      result.pageInfo.nextCursor = `${snapshot.id}.${index}.${sign([snapshot.id, index, snapshot.queryKey, snapshot.authorityFingerprint, snapshot.revision])}`;
     }
     result.aggregateCoverage.pageRows = result.rows.length;
     // Detach all nested DTOs so an in-process bridge cannot mutate cached pages.
@@ -235,7 +236,7 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
   async function query(raw, auth, { owner, signal } = {}) {
     let request;
     try {
-      const a = authority(auth), key = authKey(a);
+      const a = authority(auth), key = authorityFingerprint(a);
       if (requests.size >= 128 || [...requests].filter(r => r.pluginId === a.pluginId).length >= 32
         || (owner && [...requests].filter(r => r.owner === owner).length >= 16)) return envelope('budgetExceeded');
       let reject;
@@ -279,10 +280,10 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
   function makeSnapshot(captured, q, a, key, stamp, projected, rows, projectionId, createdAt = now()) {
     const asOf = typeof captured.stats?.updatedAt === 'string' ? captured.stats.updatedAt : null;
     const ageMs = asOf && Number.isFinite(Date.parse(asOf)) ? Math.max(0, now() - Date.parse(asOf)) : null;
-    return { id: randomBytes(16).toString('hex'), traversed: false, fence: cursorFence(captured, q), stamp, query: q, projectionId, revision: captured.revision, authKey: key, pluginId: a.pluginId, queryKey: queryKey(q), rows, createdAt, envelope: { version: 1, schemaVersion: 1, snapshotRevision: captured.revision, asOf, collectedAt: asOf, freshness: { ageMs, state: ageMs === null ? 'unknown' : ageMs > 120000 ? 'stale' : 'fresh' }, availability: projected.availability, redacted: projected.redacted ? ['identities'] : [], aggregateCoverage: { kind: projected.incomplete ? 'partial' : projected.availability === 'available' ? 'authorizedCollection' : 'unavailable', totalRows: rows.length, filtered: Object.keys(q.filter).length > 0, totalsArePageSums: false } } };
+    return { id: randomBytes(16).toString('hex'), traversed: false, fence: cursorFence(captured, q), stamp, query: q, projectionId, revision: captured.revision, authorityFingerprint: key, pluginId: a.pluginId, queryKey: queryKey(q), rows, createdAt, envelope: { version: 1, schemaVersion: 1, snapshotRevision: captured.revision, asOf, collectedAt: asOf, freshness: { ageMs, state: ageMs === null ? 'unknown' : ageMs > 120000 ? 'stale' : 'fresh' }, availability: projected.availability, redacted: projected.redacted ? ['identities'] : [], aggregateCoverage: { kind: projected.incomplete ? 'partial' : projected.availability === 'available' ? 'authorizedCollection' : 'unavailable', totalRows: rows.length, filtered: Object.keys(q.filter).length > 0, totalsArePageSums: false } } };
   }
   function retainSnapshot(snapshot) {
-    for (const [id, s] of snapshots) if (!s.traversed && s.authKey === snapshot.authKey && s.queryKey === snapshot.queryKey) deleteSnapshot(id);
+    for (const [id, s] of snapshots) if (!s.traversed && s.authorityFingerprint === snapshot.authorityFingerprint && s.queryKey === snapshot.queryKey) deleteSnapshot(id);
     const own = [...snapshots.values()].filter(s => s.pluginId === snapshot.pluginId).sort((a, b) => snapshotPriority(a) - snapshotPriority(b));
     while (own.length >= 8) deleteSnapshot(own.shift().id);
     if (snapshots.size >= 256) throw new Error('budgetExceeded');
@@ -356,7 +357,7 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
       }
       if (index < snapshot.rows.length) {
         result.pageInfo.hasMore = true;
-        result.pageInfo.nextCursor = `${snapshot.id}.${index}.${sign([snapshot.id, index, snapshot.queryKey, snapshot.authKey, snapshot.revision])}`;
+        result.pageInfo.nextCursor = `${snapshot.id}.${index}.${sign([snapshot.id, index, snapshot.queryKey, snapshot.authorityFingerprint, snapshot.revision])}`;
       }
       result.aggregateCoverage.pageRows = result.rows.length;
       const detached = JSON.parse(JSON.stringify(result));
@@ -376,14 +377,14 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
       q = normalizeQuery(raw);
       request.query = q; request.fence = cursorFence(latest, q);
       request.check();
-      a = authority(auth); key = authKey(a);
+      a = authority(auth); key = authorityFingerprint(a);
       if (!a.permissions.includes(`tm.data.${RESOURCES[q.resource]}`)) return envelope('denied');
       sweep();
       if (q.page.cursor) {
         const [snapshotId, rawOffset, signature] = q.page.cursor.split('.');
         const snapshot = snapshots.get(snapshotId), offset = Number(rawOffset);
         if (!snapshot || now() - snapshot.createdAt > snapshotTtlMs || snapshot.fence !== cursorFence(latest, snapshot.query)) return envelope('snapshotExpired');
-        if (!Number.isSafeInteger(offset) || offset < 0 || offset >= snapshot.rows.length || snapshot.authKey !== key || snapshot.queryKey !== queryKey(q) || signature !== sign([snapshot.id, offset, snapshot.queryKey, snapshot.authKey, snapshot.revision])) return envelope('invalidCursor');
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset >= snapshot.rows.length || snapshot.authorityFingerprint !== key || snapshot.queryKey !== queryKey(q) || signature !== sign([snapshot.id, offset, snapshot.queryKey, snapshot.authorityFingerprint, snapshot.revision])) return envelope('invalidCursor');
         snapshot.traversed = true;
         return snapshot.lazy ? await lazyPage(snapshot, offset, q, request) : page(snapshot, offset, q);
       }
@@ -394,7 +395,7 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
       if ((!a.permissions.includes('tm.data.identities') || a.scope.identities === false) && (q.filter.search || q.sort.field === 'label')) return envelope('denied');
       let captured = latest;
       const stamp = dependency(captured, q), qKey = queryKey(q), capturedAt = now();
-      const reusable = [...snapshots.values()].find(s => s.stamp === stamp && s.authKey === key && s.queryKey === qKey);
+      const reusable = [...snapshots.values()].find(s => s.stamp === stamp && s.authorityFingerprint === key && s.queryKey === qKey);
       if (reusable) return reusable.lazy ? await lazyPage(reusable, 0, q, request) : page(reusable, 0, q);
       const neutral = { ...q, filter: q.filter.deviceId ? { deviceId: q.filter.deviceId } : {}, sort: { field: 'id', direction: 'asc' }, page: { limit: 100, cursor: null } };
       const projectionId = sign([key, stamp, neutral]);
@@ -465,7 +466,7 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
         // No polling is required from live readers: a denied refetch always
         // leaves one follow-up signal, including after the last publication.
         const qKey = queryKey(q);
-        for (const s of subscriptions.values()) if (s.authKey === key && s.queryKey === qKey) invalidate(s, false, error.retryAfterMs);
+        for (const s of subscriptions.values()) if (s.authorityFingerprint === key && s.queryKey === qKey) invalidate(s, false, error.retryAfterMs);
         return { ...envelope('rateLimited'), retryAfterMs: error.retryAfterMs };
       }
       return envelope(['denied', 'snapshotExpired', 'unsupportedVersion', 'unsupportedResource', 'invalidQuery', 'invalidPeriod', 'invalidFilter', 'invalidSort', 'invalidPage', 'scopeUnavailable', 'budgetExceeded'].includes(error.message) ? error.message : 'temporarilyUnavailable');
@@ -480,7 +481,7 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
   function deliver(subscription, value) {
     if (subscription.closed || disposed) return;
     try {
-      if (authKey(authority(subscription.getAuth)) !== subscription.authKey) { stop(subscription); return; }
+      if (authorityFingerprint(authority(subscription.getAuth)) !== subscription.authorityFingerprint) { stop(subscription); return; }
       subscription.callback(value);
     } catch { stop(subscription); }
   }
@@ -542,7 +543,7 @@ function createBusinessDataService({ identitySecret = randomBytes(32), loadHisto
       if (q.page.cursor || !a.permissions.includes(`tm.data.${RESOURCES[q.resource]}`)) throw new Error('denied');
       const id = requestedId || `business-${++sequence}`;
       if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id) || subscriptions.has(id) || subscriptions.size >= 128 || [...subscriptions.values()].filter(s => s.owner === owner).length >= 16) throw new Error('subscriptionLimit');
-      const subscription = { controller: new AbortController(), id, owner, query: q, queryKey: queryKey(q), retryAt: 0, timerAt: 0, stamp: dependency(latest, q), fence: cursorFence(latest, q), reset: false, pluginId: a.pluginId, getAuth, callback, authKey: authKey(a), initialized: false, closed: false, timer: null, sequence: 0 };
+      const subscription = { controller: new AbortController(), id, owner, query: q, queryKey: queryKey(q), retryAt: 0, timerAt: 0, stamp: dependency(latest, q), fence: cursorFence(latest, q), reset: false, pluginId: a.pluginId, getAuth, callback, authorityFingerprint: authorityFingerprint(a), initialized: false, closed: false, timer: null, sequence: 0 };
       subscriptions.set(id, subscription);
       const initialStamp = subscription.stamp;
       Promise.resolve().then(() => subscription.closed ? null : query(q, getAuth, { owner, signal: subscription.controller.signal })).then(value => {
