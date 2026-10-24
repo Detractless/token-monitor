@@ -29,5 +29,6 @@ contextBridge.exposeInMainWorld('tokenMonitorEdgeDock', {
   // Plugin pages: which views the open panel shows, and their content.
   setPluginDemand: (refs) => ipcRenderer.send('topNotch:pluginDemand', { refs }),
   interact: (ref, input, revision) => ipcRenderer.invoke('plugins:interact', { surface: 'notch', ref, input, revision }),
-  onPluginViews: (callback) => subscribe('plugins:views', callback)
+  onPluginViews: (callback) => subscribe('plugins:views', callback),
+  onScroll: (callback) => subscribe('topNotch:scroll', callback)
 });

@@ -11,6 +11,8 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.TokenMonitorNotchPanel = api;
 })(typeof window !== 'undefined' ? window : null, function createNotchPanelApi(placements) {
+  const scrollApi = (typeof module === 'object' && module.exports) ? require('./scrollGesture') : window.TokenMonitorNotchScroll;
+  const { swipeDestination } = scrollApi;
   // Logical points inside the zoomed panel. The band shares the camera row on
   // an attached shell and becomes the first row of a capsule.
   const PANEL_METRICS = Object.freeze({ band: 34, pages: 176, gap: 6, bottom: 18, padding: 24 });
@@ -232,6 +234,8 @@
       const selectedBuiltins = Array.isArray(builtins) ? PAGES.filter(page => builtins.includes(page)) : PAGES;
       const next = placements.orderNotchPages([...selectedBuiltins, ...wanted], order);
       if (next.join('|') === pageOrder.join('|')) return;
+      dropGesture();
+      clearPageMotion();
       for (const page of pageOrder) {
         if (next.includes(page) || PAGES.includes(page)) continue;
         releasePluginPage(page);
@@ -264,6 +268,7 @@
 
     let payload = null;
     let pageKeys = new Map();
+    let sessionScroll = { active: 0, recent: 0 };
     let enteringTimer = null;
     let fitHomeFuel = () => {};
     const numberAnimation = window.TokenMonitorTokenNumberAnimation;
@@ -377,8 +382,7 @@
       pluginHost?.refreshDemand();
     }
 
-    function selectPage(page) {
-      if (!pageOrder.includes(page) || view.page === page) return;
+    function commitPage(page) {
       const previous = pageOrder.indexOf(view.page);
       settleRolls();
       stopTitleReading();
@@ -391,6 +395,82 @@
       pages.dataset.direction = pageOrder.indexOf(page) > previous ? 'forward' : 'back';
       paintTabs();
       renderPage(page);
+    }
+
+    let gesture = null;
+    let shown = true;
+    function clearPageMotion() {
+      for (const pageNode of pageNodes.values()) {
+        pageNode.style.opacity = '';
+        pageNode.style.transform = '';
+        pageNode.style.filter = '';
+      }
+      if (pages.classList.contains('is-handoff')) {
+        // CSS transitions resume only after resting styles are committed.
+        void pages.offsetWidth;
+        pages.classList.remove('is-handoff');
+        for (const pill of [leadPill, trailPill]) { pill.style.transition = ''; pill.style.opacity = ''; }
+      }
+    }
+    function dropGesture() {
+      gesture = null;
+      for (const page of pageOrder) if (page !== view.page) releasePluginPage(page);
+      const strip = node.querySelector('.notch-limits');
+      strip?.classList.remove('is-handoff');
+    }
+    function selectPage(page) {
+      if (!pageOrder.includes(page) || view.page === page) return;
+      dropGesture();
+      clearPageMotion();
+      commitPage(page);
+    }
+    // An empty page must not overwrite the last scroll positions.
+    function captureSessionScroll(pageNode) {
+      if (pageNode.childElementCount) {
+        sessionScroll = {
+          active: pageNode.querySelector('.notch-active-list')?.scrollTop || 0,
+          recent: pageNode.querySelector('.notch-recent-list')?.scrollTop || 0
+        };
+      }
+      return sessionScroll;
+    }
+    function dropHiddenPages() {
+      for (const [page, pageNode] of pageNodes) {
+        if (page === view.page) continue;
+        if (page === 'sessions') captureSessionScroll(pageNode);
+        pageNode.replaceChildren();
+        pageKeys.delete(page);
+      }
+    }
+    function showDrag(origin, target, amount) {
+      if (origin === target) amount = 0;
+      const travel = Math.min(1, Math.abs(amount));
+      pages.classList.add('is-handoff');
+      pageOrder.forEach((page, index) => {
+        const pageNode = pageNodes.get(page);
+        const shift = index === origin ? -amount : Math.sign(target - origin) * (1 - travel);
+        pageNode.style.opacity = index === origin || index === target ? '1' : '0';
+        pageNode.style.transform = `translateX(${shift * gesture.pageStep}px)`;
+        pageNode.style.filter = 'none';
+      });
+      placeTabs(origin + (target - origin) * travel, { track: true });
+    }
+    // Tab springs are disabled during native tracking.
+    function placeTabs(position) {
+      const clamped = Math.max(0, Math.min(pageOrder.length - 1, position));
+      const from = Math.floor(clamped), to = Math.ceil(clamped), fraction = clamped - from;
+      for (const [track, pill] of [[leadTrack, leadPill], [trailTrack, trailPill]]) {
+        const buttons = [...track.children].filter(child => child.classList.contains('notch-tab') && !child.hidden);
+        const a = buttons.indexOf(tabButtons.get(pageOrder[from]));
+        const b = buttons.indexOf(tabButtons.get(pageOrder[to]));
+        const offset = stepBack.parentNode === track && !stepBack.hidden ? STEP_SLOT : 0;
+        pill.style.transition = 'none';
+        if (a < 0 && b < 0) { pill.classList.add('is-off'); continue; }
+        const index = a >= 0 && b >= 0 ? a + (b - a) * fraction : a >= 0 ? a : b;
+        pill.style.transform = `translateX(${index * TAB_SLOT + offset}px)`;
+        pill.style.opacity = String(a >= 0 && b >= 0 ? 1 : a >= 0 ? 1 - fraction : fraction);
+        pill.classList.remove('is-off');
+      }
     }
 
     function paintTabs() {
@@ -865,10 +945,6 @@
       return column;
     }
 
-    // The columns scroll sideways a page of LIMIT_COLUMNS slots at a time: a
-    // trackpad swipe is native (scroll snapping keeps pages whole), a vertical
-    // wheel steps one page per gesture, and the dots only show where the strip
-    // is. Past one page the next column peeks in at the edge.
     const limitWheel = { sum: 0, stepped: false, timer: null };
 
     function limitPageWidth(strip) {
@@ -1183,23 +1259,22 @@
       const key = pageKey(page, nowMs);
       if (!force && pageKeys.get(page) === key) return;
       // Hover readings belong to the DOM they were made on; a rebuild under
-      // the pointer would otherwise drop the scrubbed day mid-gesture.
+      // the pointer would otherwise drop the scrubbed day mid-gesture; a swipe
+      // likewise owns the limits strip it measured.
       if (page === 'home' && view.scrub && !force) return;
+      if (page === 'limits' && gesture?.strip && !force) return;
       if (pageKeys.has(page)) node.classList.remove('is-entering');
       pageKeys.set(page, key);
       const pageNode = pageNodes.get(page);
       const focused = pageNode.contains(document.activeElement) ? document.activeElement?.dataset.focusKey : null;
-      const sessionScroll = {
-        active: pageNode.querySelector('.notch-active-list')?.scrollTop || 0,
-        recent: pageNode.querySelector('.notch-recent-list')?.scrollTop || 0
-      };
+      const scroll = page === 'sessions' ? captureSessionScroll(pageNode) : null;
       const snapshot = page === view.page ? captureRolls(pageNode) : new Map();
       const previous = el('div');
       previous.append(...pageNode.children);
       if (page.startsWith(PLUGIN_PAGE_PREFIX)) renderPluginPage(pageNode, page.slice(PLUGIN_PAGE_PREFIX.length));
       else if (page === 'home') renderHome(pageNode, nowMs);
       else if (page === 'limits') renderLimits(pageNode, nowMs);
-      else if (page === 'sessions') renderSessions(pageNode, nowMs, sessionScroll);
+      else if (page === 'sessions') renderSessions(pageNode, nowMs, scroll);
       else renderBreakdown(pageNode, nowMs);
       overflowText.preserveReading(previous, pageNode);
       overflowText.refresh();
@@ -1227,12 +1302,84 @@
       }
     }
 
+    function scrollEnv(hit) {
+      const stripNode = node.querySelector('.notch-limits');
+      const strip = hit === 'strip' && stripNode?.classList.contains('is-paged') ? {
+        origin: view.limitPage,
+        pageWidth: limitPageWidth(stripNode),
+        pageCount: stripNode.querySelectorAll('.is-page-start').length
+      } : null;
+      return { page: pageOrder.indexOf(view.page), strip };
+    }
+    function hitFromPoint(record) {
+      const target = document.elementFromPoint?.(record.x, record.y);
+      return view.page === 'limits' && target?.closest('.notch-page-limits') ? 'strip' : 'page';
+    }
+    function finishSwipe() {
+      if (!gesture) return;
+      const { destination, decision = 0, strip: held } = gesture;
+      const page = destination?.lane === 'outer' && decision ? pageOrder[destination.target] : view.page;
+      if (gesture.strip) {
+        const strip = node.querySelector('.notch-limits');
+        view.limitPage = destination?.lane === 'strip' && decision ? destination.target : gesture.strip.origin;
+        if (strip) strip.scrollLeft = view.limitPage * gesture.strip.pageWidth;
+      }
+      dropGesture();
+      if (page !== view.page) commitPage(page);
+      else {
+        paintTabs();
+        if (held) renderPage('limits');
+      }
+      clearPageMotion();
+    }
+    function paintSwipe() {
+      const { destination, amount } = gesture;
+      if (!destination) return;
+      const strip = gesture.strip && node.querySelector('.notch-limits');
+      if (strip) {
+        strip.classList.add('is-handoff');
+        const position = destination.lane === 'strip'
+          ? destination.origin + (destination.target - destination.origin) * Math.abs(amount) : gesture.strip.origin;
+        strip.scrollLeft = position * gesture.strip.pageWidth;
+      }
+      showDrag(gesture.page, destination.lane === 'outer' ? destination.target : gesture.page, amount);
+    }
+    function applyScroll(record) {
+      if (!shown || !record || !pageOrder.length) return;
+      if (record.phase === 'began') {
+        finishSwipe();
+        const env = scrollEnv(hitFromPoint(record));
+        const style = window.getComputedStyle(pages);
+        gesture = { id: record.id, ...env,
+          pageStep: parseFloat(style.width) + parseFloat(style.getPropertyValue('--notch-page-gap')) };
+      }
+      if (!gesture || gesture.id !== record.id) return;
+      const amount = Math.max(-1, Math.min(1, record.amount));
+      if (amount) {
+        const previous = gesture.destination;
+        const destination = swipeDestination(gesture.page, pageOrder.length, gesture.strip, amount);
+        if (destination.lane === 'outer' && destination.target !== gesture.page
+          && (previous?.lane !== 'outer' || previous.target !== destination.target)) renderPage(pageOrder[destination.target]);
+        gesture.destination = destination;
+      }
+      if (record.phase === 'ended' || record.phase === 'cancelled') {
+        gesture.decision = record.phase === 'ended' ? Math.sign(amount) : 0;
+        if (prefersReducedMotion()) { finishSwipe(); return; }
+      }
+      gesture.amount = amount;
+      paintSwipe();
+      if (record.complete) finishSwipe();
+    }
+
     function render(next, { opening = false } = {}) {
+      shown = true;
       payload = next;
       syncPluginPages(next?.panel?.pluginPages, next?.panel?.builtinPages, next?.panel?.pageOrder);
       node.classList.toggle('is-reduced-motion', prefersReducedMotion());
       if (opening) {
-        view.scrub = null; pageKeys = new Map();
+        view.scrub = null;
+        dropHiddenPages();
+        pageKeys = new Map();
         // Entrance motion plays once per reveal, never on a data push.
         node.classList.add('is-entering');
         clearTimeout(enteringTimer);
@@ -1240,8 +1387,11 @@
       }
       paintTabs();
       paintStatus();
-      // Hidden pages refresh when selected; only the visible one tracks pushes.
+      // The visible page owns the hover reading.
+      const preview = gesture?.destination;
+      if (preview?.lane === 'outer' && preview.target !== preview.origin) renderPage(pageOrder[preview.target]);
       renderPage(view.page);
+      if (gesture) paintSwipe();
     }
 
     function place(geometry, zoom) {
@@ -1259,11 +1409,17 @@
     }
     function suspend() {
       releasePluginPage(view.page);
+      shown = false;
+      clearTimeout(limitWheel.timer);
+      Object.assign(limitWheel, { sum: 0, stepped: false, timer: null });
       settleRolls();
       stopTitleReading();
       clearTimeout(enteringTimer);
+      dropGesture();
+      clearPageMotion();
       node.classList.remove('is-entering');
       view.scrub = null;
+      dropHiddenPages();
     }
     const fuelObserver = typeof window.ResizeObserver === 'function'
       ? new window.ResizeObserver(() => { fitHomeFuel(); fitLimitPlans(); }) : null;
@@ -1272,7 +1428,8 @@
     const tabObserver = typeof window.ResizeObserver === 'function' ? new window.ResizeObserver(fitTabs) : null;
     tabObserver?.observe(leadRail);
     tabObserver?.observe(trailRail);
-    window.addEventListener('pagehide', () => { suspend(); fuelObserver?.disconnect(); tabObserver?.disconnect(); }, { once: true });
+    const removeScroll = bridge.onScroll?.(applyScroll);
+    window.addEventListener('pagehide', () => { suspend(); removeScroll?.(); fuelObserver?.disconnect(); tabObserver?.disconnect(); }, { once: true });
     paintTabs();
     return { node, render, place, selectPage, suspend, pluginViewsChanged, contentHeight: panelContentHeight, view };
   }

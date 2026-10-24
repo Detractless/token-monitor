@@ -14,7 +14,19 @@ let lastLedger;
 const compiled = new Module(servicePath, module);
 compiled.filename = servicePath; compiled.paths = module.paths;
 const normalRequire = compiled.require.bind(compiled);
-compiled.require = name => name === './lazySessions' ? { ...helper, createSessionBacking(options) { lastLedger = helper.createSessionBacking(options); return lastLedger; } } : normalRequire(name);
+// These tests assert data/lifetime/retention semantics, not machine throughput.
+// Keep work admission deterministic under the full suite's concurrent load;
+// pluginBusinessCache separately tests measured debt/refill with a controlled clock.
+const workPerformance = { now: () => 0 };
+const lazyPath = path.join(path.dirname(servicePath), 'lazySessions.js');
+const lazyModule = new Module(lazyPath, module);
+lazyModule.filename = lazyPath; lazyModule.paths = module.paths;
+const lazyRequire = lazyModule.require.bind(lazyModule);
+lazyModule.require = name => name === 'node:perf_hooks' ? { performance: workPerformance } : lazyRequire(name);
+lazyModule._compile(fs.readFileSync(lazyPath, 'utf8'), lazyPath);
+const semanticHelper = lazyModule.exports;
+compiled.require = name => name === 'node:perf_hooks' ? { performance: workPerformance }
+  : name === './lazySessions' ? { ...semanticHelper, createSessionBacking(options) { lastLedger = semanticHelper.createSessionBacking(options); return lastLedger; } } : normalRequire(name);
 compiled._compile(fs.readFileSync(process.env.BUSINESS_SERVICE_PATH || servicePath, 'utf8'), servicePath);
 const { createBusinessDataService } = compiled.exports;
 const shared = require('../../src/shared/plugins/businessData');
@@ -224,7 +236,8 @@ test('bounded sort/merge yields after scanning and cancels before admission', as
   assert.ok(checks > 100); assert.ok(sortChecks > 100);
 });
 test('synthetic event-loop probe reports chunked first-page latency without a machine-specific timing assertion', async t => {
-  const service = setup(t), query = q();
+  const service = require(servicePath).createBusinessDataService({ identitySecret: secret }), query = q();
+  service.publish(fixture()); t.after(() => service.dispose());
   let stopped = false, last = performance.now(), maxGap = 0, turns = 0;
   const monitor = (async () => { while (!stopped) { await immediate(); const current = performance.now(); maxGap = Math.max(maxGap, current - last); last = current; turns++; } })();
   const start = performance.now(), first = await service.query(query, authority), duration = performance.now() - start;
