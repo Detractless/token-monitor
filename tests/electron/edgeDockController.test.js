@@ -170,6 +170,7 @@ function createFixture(options = {}) {
     powerMonitor,
     screen,
     platform: options.platform || 'win32',
+    osRelease: options.osRelease ?? '24.6.0',
     rendererDir: '/renderer',
     preloadPath: '/preload.js',
     getSettings: () => settings,
@@ -1950,6 +1951,43 @@ test('a hidden macOS rail is parked off every display so a Space switch cannot f
   assert.equal(rail.opacity, 0);
   assert.equal(onAnyDisplay(rail, displays), false, 'parked again once it retracts');
 });
+
+for (const [version, osRelease] of [['12', '21.6.0'], ['13', '22.6.0'], ['14', '23.6.0'], ['15.6.1', '24.6.0'], ['26', '25.0.0'], ['27', '26.0.0']]) {
+  test(`macOS ${version} only parks hidden surfaces when older than macOS 26`, (t) => {
+    const fixture = createFixture({ platform: 'darwin', osRelease, settings: { edgeDockMode: 'autoHide' } });
+    t.after(() => fixture.controller.stop());
+    const rail = fixture.windowFor('rail');
+    const bubble = fixture.windowFor('bubble');
+    const shouldPark = Number.parseInt(version, 10) < 26;
+    const assertHidden = () => {
+      for (const win of [rail, bubble]) {
+        assert.equal(win.opacity, 0);
+        assert.equal(onAnyDisplay(win, fixture.screen.getAllDisplays()), !shouldPark, `${win.surface} placement`);
+      }
+    };
+    assertHidden();
+
+    fixture.settings.edgeDockMode = 'always';
+    fixture.controller.sync();
+    assert.equal(rail.opacity, 1);
+    assert.equal(onAnyDisplay(rail, fixture.screen.getAllDisplays()), true);
+    fixture.ipcMain.emit('edgeDock:click', { sender: rail.webContents }, { cellIndex: 1 });
+    fixture.ipcMain.emit('edgeDock:bubbleSize', { sender: bubble.webContents }, { cellId: 'codex', height: 180 });
+    assert.equal(bubble.opacity, 1);
+    assert.equal(onAnyDisplay(bubble, fixture.screen.getAllDisplays()), true);
+    fixture.ipcMain.emit('edgeDock:dismiss', { sender: bubble.webContents });
+    fixture.settings.edgeDockMode = 'autoHide';
+    fixture.controller.sync();
+    assertHidden();
+
+    fixture.screen.displays.push({ id: 2, scaleFactor: 2, bounds: { x: 1200, y: 0, width: 3000, height: 900 }, workArea: { x: 1200, y: 0, width: 3000, height: 860 } });
+    fixture.screen.emit('display-added');
+    assertHidden();
+    fixture.settings.edgeDockSide = 'left';
+    fixture.screen.emit('display-metrics-changed');
+    assertHidden();
+  });
+}
 
 test('a hidden Windows rail stays in place', (t) => {
   const fixture = createFixture({ platform: 'win32', settings: { edgeDockMode: 'autoHide' } });

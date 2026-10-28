@@ -69,6 +69,7 @@ function createEdgeDockController(deps) {
     powerMonitor,
     screen,
     platform = process.platform,
+    osRelease = os.release(),
     rendererDir,
     preloadPath,
     getSettings,
@@ -98,10 +99,10 @@ function createEdgeDockController(deps) {
   const windows = { peek: null, rail: null, bubble: null };
   const ready = { peek: false, rail: false, bubble: false };
   const visibleTargets = { peek: false, rail: false, bubble: false };
-  // A hidden macOS rail or card waits off every display. When the system brings
-  // an all-Spaces window onto a newly entered Space it can present it for a
-  // moment without its alpha, so a window resting at opacity 0 flashed in full
-  // after each Space switch. `placed` keeps the bounds the layout wants.
+  // Before macOS 26 (Darwin 25), park hidden rails and cards off every display
+  // to work around flashes during Space switches, reproduced on macOS 15.6.1.
+  // Keep newer systems on the existing opacity-only path. `placed` preserves
+  // the bounds the layout wants while a surface is parked.
   const parked = { rail: false, bubble: false };
   const placed = { rail: null, bubble: null };
   const fades = new Map();
@@ -397,7 +398,7 @@ function createEdgeDockController(deps) {
   }
 
   function parks(surface) {
-    return platform === 'darwin' && Object.hasOwn(parked, surface);
+    return platform === 'darwin' && Number.parseInt(osRelease, 10) < 25 && Object.hasOwn(parked, surface);
   }
 
   function parkedBounds(bounds) {
